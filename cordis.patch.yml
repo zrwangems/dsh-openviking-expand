@@ -1,0 +1,23 @@
+# dsh-openviking-expand 组合包补丁层。
+#
+# 插件壳本身不提供功能：三个组件各自是独立的 Cordis 插件行，可单独开关：
+#   console —— 左侧栏 OpenViking 入口 + 同源 /studio/* 代理；
+#   sidebar —— viking:// 目录树（/openviking-expand/* 前缀路由）；
+#   vika    —— vendored vika 运行时 + Vika Router 面板。
+- insert:
+    - id: openviking-expand-shell
+      name: 'dsh-openviking-expand'
+    - id: openviking-expand-sidebar
+      name: 'dsh-openviking-expand/sidebar'
+      config:
+        endpoint: http://127.0.0.1:1933
+        sidebar:
+          root: viking://
+          showHidden: false
+          nodeLimit: 1000
+    - id: openviking-expand-console
+      name: 'dsh-openviking-expand/console'
+      config:
+        endpoint: http://127.0.0.1:1933
+    - id: openviking-expand-vika
+      name: 'dsh-openviking-expand/vika'

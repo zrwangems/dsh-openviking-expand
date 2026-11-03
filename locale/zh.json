@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "OpenViking 扩展",
+    "description": "把 OpenViking 接进 DSH：左侧栏打开 Studio 控制台，右侧栏浏览 viking:// 目录树（条目可 @ 引用，目录看 L0+L1 组合）。"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "vika",
+    "description": "Vika 作为 Router 的 Vika 面板（vendored vika Windows 适配版）+ 本地回环桥；每个 worker 是一个真实 DSH 会话。"
+  }
+}

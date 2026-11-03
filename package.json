@@ -1,0 +1,87 @@
+{
+  "name": "dsh-openviking-expand",
+  "version": "0.1.0",
+  "description": "OpenViking bundle for DeepSeek Harness: Studio console, viking:// sidebar, and a vendored vika panel where Vika is the router and DSH sessions are workers",
+  "license": "AGPL-3.0-only",
+  "author": "zrwangems",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zrwangems/dsh-openviking-expand.git"
+  },
+  "homepage": "https://github.com/zrwangems/dsh-openviking-expand#readme",
+  "bugs": {
+    "url": "https://github.com/zrwangems/dsh-openviking-expand/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "openviking",
+    "console",
+    "sidebar",
+    "better-sidebar",
+    "vika",
+    "agent",
+    "bridge",
+    "plugin",
+    "bundle"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "type": "module",
+  "main": "host/index.mjs",
+  "icon": "./icons/openviking-expand.png",
+  "scripts": {
+    "build": "node scripts/build-client.mjs",
+    "check": "node scripts/build-client.mjs && node --check lib/client.js",
+    "test": "node --test test/*.test.mjs",
+    "smoke": "node scripts/smoke-client.mjs",
+    "smoke:host": "node scripts/smoke.mjs",
+    "prepublishOnly": "npm run check && npm test && node scripts/smoke-client.mjs"
+  },
+  "exports": {
+    ".": "./host/index.mjs",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icons/openviking-expand.png",
+    "./console": "./host/components/console/index.mjs",
+    "./sidebar": "./host/components/sidebar/index.mjs",
+    "./vika": "./host/components/vika/index.mjs",
+    "./console/locale/*.json": "./locale/console/*.json",
+    "./console/icon": "./icons/console.png",
+    "./sidebar/locale/*.json": "./locale/sidebar/*.json",
+    "./vika/locale/*.json": "./locale/vika/*.json",
+    "./sidebar/icon": "./icons/sidebar.png",
+    "./vika/icon": "./icons/vika.png"
+  },
+  "files": [
+    "host/",
+    "client/",
+    "lib/",
+    "vika/",
+    "scripts/",
+    "locale/",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "icons/"
+  ],
+  "dependencies": {
+    "proper-lockfile": "4.1.2",
+    "zod": "4.4.3"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}
