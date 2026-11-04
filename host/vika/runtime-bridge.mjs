@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { ticketStage } from "../../vika/runtime/lib/index.js";
+import { ticketStage } from "./ticket-stage.mjs";
 
 /** Browse directories for the new-workspace picker. */
 function browseDirectories(input) {

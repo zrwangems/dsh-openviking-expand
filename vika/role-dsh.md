@@ -18,13 +18,14 @@ The vika component runs an embedded Vika runtime (the Windows-ready build) and i
 
 - Before accepting, run `node /root/.vika/tools/dsh-bridge.mjs sa-workspaces` to list DSH workspaces that already exist.
 - Pick one existing workspace as the Worker cwd for this task and pass it to `sa-decide` as `--workspace <path>`. Never create a directory per repository or per ticket.
-- If you believe a new workspace is needed, first tell the user the proposed directory and why, and wait for an explicit yes. The user creates the workspace in DSH. Only after that may you select it with `--workspace`. Never create or imply creating a workspace before the user agrees.
+- If you believe a new workspace is needed, first tell the user the proposed directory and why, and wait for an explicit yes. After the user agrees, run `sa-workspace-add --path <directory>`, then select it with `--workspace <directory> --workspace-new`. Never create or imply creating a workspace before the user agrees.
 - During testing you may use the existing Default workspace; in production choose the workspace that matches the user's actual task.
 
 ### Feishu router mode
 
 - The user enters router mode with exactly `/dshin`. First run `sa-mode on`; only in router mode may you use the DSH tools and create worker sessions.
 - On `/dshin`, immediately run `sa-workspaces` and reply in Feishu with a numbered list of the existing workspace paths, plus a final option "Create a new workspace".
+- Format that list as `序号、名称 — 路径` with the Chinese enumeration comma (`1、Default — D:/...`, `10、Synology-NAS — E:/...`, `17、新建 workspace`). Do not use a Markdown ordered list (`1.`, `2.`, …): Feishu truncates two-digit ordered-list markers and shows item 10 as `0.`. This rule applies to every list you send to Feishu with more than nine items.
 - If the user picks an existing workspace, remember that path and use it as `--workspace` when accepting work.
 - If the user picks "Create a new workspace", browse from the drive root with `sa-fs` one level at a time; show the current path and its child directories, and ask the user to choose a child or confirm the current path. Do not jump ahead and do not create anything until the user explicitly confirms the final directory.
 - After the user confirms the final directory, run `sa-workspace-add --path <directory>` and then use `--workspace <directory> --workspace-new` when accepting. This is the only way a new workspace may be created.
@@ -55,8 +56,8 @@ The vika component runs an embedded Vika runtime (the Windows-ready build) and i
    - `working` is running; `blocked` needs a person (the report has the failure/blocker); `ended` is finished.
    - Read `report.summary` (or the last report in `assignments`) as the result.
 5. **Reply**: compress `report.summary` into a short Feishu reply (roughly 100 characters or less), or publish with `gh-work publish ...` for GitHub. Workers never talk to the outside world.
-6. **Follow-ups in the same thread**: send another `sa-trigger` with the same `--thread`; the engine records it as a new event for that thread and you decide again or attach it to an existing ticket.
-7. **Only when the engine is unavailable** (repeated `sa-state` failures) explain the failure. Do not fall back to direct `create/send`; the engine is the only entry point for tickets and Workers.
+6. **Follow-ups in the same thread**: send another `sa-trigger` with the same `--thread`. If a ticket on that thread still has a live Worker, the engine delivers the message straight to that Worker (no new ticket, no new session) — just follow the ticket with `sa-wait-ticket` and report its next result; do not call `sa-decide` for it. If no ticket is alive, it becomes a new event for you to decide as usual.
+7. **Only when the engine is unavailable** (repeated `sa-state` failures) explain the failure. There is no direct session command to fall back to: the engine is the only entry point for tickets and Workers.
 
 ### Boundaries
 

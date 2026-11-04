@@ -19,7 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
 function loadToolsConfig() {
   const candidates = [process.env.VIKA_TOOLS_CONFIG, "/root/.vika-tools.json", "/root/.dsh-bridge.json"].filter(Boolean);
   for (const candidate of candidates) {
@@ -36,6 +36,7 @@ const REPOS_ROOT = process.env.VIKA_REPOS_ROOT || "/workspace/repos";
 const TASKS_ROOT = process.env.VIKA_TASKS_ROOT || "/workspace/tasks";
 const HOST_REPOS_ROOT = process.env.VIKA_HOST_REPOS_ROOT || TOOLS_CONFIG.hostReposRoot || "/workspace/repos";
 const HOST_TASKS_ROOT = process.env.VIKA_HOST_TASKS_ROOT || TOOLS_CONFIG.hostTasksRoot || "/workspace/tasks";
+const HOST_WORKSPACE_ROOT = process.env.VIKA_HOST_WORKSPACE_ROOT || TOOLS_CONFIG.hostWorkspace || "";
 const IDENTITY = {
   login: process.env.VIKA_GH_LOGIN || GITHUB.login || "",
   name: process.env.VIKA_GH_NAME || GITHUB.name || "",
@@ -72,7 +73,8 @@ const HELP = `gh-work ${VERSION}
 
 约定：
   - 仓库目录：${REPOS_ROOT}/<owner>__<name>/<slug>
-  - 宿主路径：${HOST_REPOS_ROOT}/<owner>__<name>/<slug>（传给 dsh-bridge 的 --repo/--slug 会自动推导）
+  - 宿主路径：${HOST_REPOS_ROOT}/<owner>__<name>/<slug>（prepare 的 hostDir 字段，直接交给 worker）
+  - 工作区宿主路径：${HOST_WORKSPACE_ROOT || "（未配置，读取 /root/.dsh-bridge.json 的 hostWorkspace）"}（prepare 的 hostWorkspace 字段，作为 sa-decide --workspace）
   - 分支：${BRANCH_PREFIX}/<slug>；不推 main/master，不 force push
   - 身份：${IDENTITY.login}`;
 
@@ -181,6 +183,11 @@ function hostDir(repo, slug) {
   return toWindowsPath(path.join(HOST_REPOS_ROOT, `${owner}__${name}`, slug));
 }
 
+/** 容器 /workspace 对应的宿主路径；插件没写配置时返回空字符串（旧配置）。 */
+function hostWorkspacePath() {
+  return HOST_WORKSPACE_ROOT === "" ? "" : toWindowsPath(HOST_WORKSPACE_ROOT);
+}
+
 /** Linux 容器里拼 Windows 宿主路径：把分隔符统一成反斜杠。 */
 function toWindowsPath(value) {
   return String(value).replace(/\//g, "\\");
@@ -247,6 +254,7 @@ function prepare(options) {
     clone: cloned ? "cloned" : "reused",
     dir,
     hostDir: hostDir(repo, slug),
+    hostWorkspace: hostWorkspacePath() || undefined,
     contextPath,
     hostContextPath,
     title: context?.title,

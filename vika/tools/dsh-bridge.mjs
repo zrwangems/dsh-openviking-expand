@@ -5,21 +5,33 @@
  * 零依赖、Node 18+；默认向 http://host.docker.internal:3742 的 vika 组件桥发请求。
  * 配置查找顺序：命令行参数 > 环境变量 > 配置文件（/root/.dsh-bridge.json）> 默认值。
  *
+ * 命令与宿主 r桥（host/vika/runtime-bridge.mjs）的 /v1/engine/* 一一对应；
+ * 这里只保留运行期桥真正实现的接口，避免模型把命令发到不存在的端点。
+ *
  * 命令：
  *   health
- *   create --title T (--cwd DIR | --repo owner/name --slug s) [--thread K]... [--prompt TEXT] [--prompt-file F]
- *   send   --session ID (--text TEXT | --text-file F) [--steer]
- *   list   [--thread K] [--status S] [--limit N]
- *   show   --session ID
- *   wait   [--session ID] [--cursor N] [--timeout SEC]
- *   cancel --session ID
- *   rename --session ID --title T
+ *   sa-mode on|off
+ *   sa-state
+ *   sa-trigger (--text | --text-file | --stdin) [--source feishu|github|manual] [--thread K] [--actor ID] [--id ID] [--strength explicit|normal]
+ *   sa-evaluating
+ *   sa-decide --id ID [--kind accept|ignore] [--title T] [--scope S] [--name N] [--reason R] [--workspace DIR [--workspace-new]]
+ *   sa-tickets [--state open|working|blocked|ended|all]
+ *   sa-ticket --id TICKET
+ *   sa-wait-ticket --id TICKET [--timeout SEC] [--interval MS]
+ *   sa-decisions
+ *   sa-threads
+ *   sa-workers
+ *   sa-workspaces
+ *   sa-fs [--path DIR]
+ *   sa-workspace-add --path DIR
+ *   sa-repos
+ *   sa-settings
  */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
 const DEFAULT_URL = "http://host.docker.internal:3742";
 const CONFIG_CANDIDATES = [
   process.env.DSH_BRIDGE_CONFIG,
@@ -33,22 +45,16 @@ const HELP = `dsh-bridge ${VERSION}
 
 用法：
   dsh-bridge health
-  dsh-bridge create --title <标题> (--cwd <目录> | --repo <owner/name> --slug <slug>)
-                    [--thread <话题键>]... [--prompt <文本> | --prompt-file <文件>] [--request-id <id>]
-  dsh-bridge send   --session <会话ID> (--text <文本> | --text-file <文件>) [--steer] [--request-id <id>]
-  dsh-bridge list   [--thread <话题键>] [--status <状态>] [--limit <N>]
-  dsh-bridge show   --session <会话ID>
-  dsh-bridge wait   [--session <会话ID>] [--cursor <游标>] [--timeout <秒>]
-  dsh-bridge cancel --session <会话ID>
-  dsh-bridge rename --session <会话ID> --title <新标题>
-
-  # vika 原生引擎（Vika 是 Router，每个 DSH 物理 session 是 worker）
-  dsh-bridge sa-mode on|off   # /dshin 进入、/dshout 退出 router 模式
+  dsh-bridge sa-mode on|off          # /dshin 进入、/dshout 退出 router 模式
   dsh-bridge sa-state
-  dsh-bridge sa-trigger (--text <文本> | --text-file <文件>) [--source feishu|github|manual] [--thread <话题键>] [--actor <id>] [--id <trigger-id>] [--strength explicit|normal]
+  dsh-bridge sa-trigger (--text <文本> | --text-file <文件> | --stdin)
+                        [--source feishu|github|manual] [--thread <话题键>] [--actor <id>]
+                        [--id <trigger-id>] [--strength explicit|normal]
   dsh-bridge sa-evaluating
-  dsh-bridge sa-decide --id <trigger-id> [--kind accept|ignore] [--actor <id>] [--title <标题>] [--scope <范围>] [--name <worktree-name>] [--workspace <已有工作区路径>]
-  dsh-bridge sa-tickets [--state open|working|ended|all]
+  dsh-bridge sa-decide --id <trigger-id> [--kind accept|ignore]
+                       [--title <标题>] [--scope <范围>] [--name <工单短名>]
+                       [--reason <原因>] [--workspace <已有工作区路径> [--workspace-new]]
+  dsh-bridge sa-tickets [--state open|working|blocked|ended|all]
   dsh-bridge sa-ticket --id <工单ID>
   dsh-bridge sa-wait-ticket --id <工单ID> [--timeout <秒>] [--interval <毫秒>]
   dsh-bridge sa-decisions
@@ -57,12 +63,8 @@ const HELP = `dsh-bridge ${VERSION}
   dsh-bridge sa-workspaces
   dsh-bridge sa-fs [--path <目录>]
   dsh-bridge sa-workspace-add --path <目录>
-  dsh-bridge sa-report --id <assignment-id> (--text <摘要> | --text-file <文件>)
   dsh-bridge sa-repos
-  dsh-bridge sa-repo-add --name <仓库名> [--path <本地路径>] [--branch <默认分支>]
-  dsh-bridge sa-repo-remove --name <仓库名>
-  dsh-bridge sa-pause [--paused | --resume]
-  dsh-bridge sa-settings [--block policy|eval|executor|channels] [--value-file <json> | --value <json>] [--revision <N>]
+  dsh-bridge sa-settings
 
 全局参数：
   --url <地址>     桥地址，默认 ${DEFAULT_URL}（也认 DSH_BRIDGE_URL）
@@ -92,8 +94,7 @@ function parseArgs(argv) {
     return values;
   };
   const flags = new Set();
-  const flagNames = ["--steer", "--help", "--json", "--stdin", "--paused", "--resume", "--workspace-new"];
-  for (const flag of flagNames) {
+  for (const flag of ["--help", "--stdin", "--workspace-new"]) {
     const index = argv.indexOf(flag);
     if (index !== -1) {
       flags.add(flag);
@@ -101,12 +102,9 @@ function parseArgs(argv) {
     }
   }
   options.help = flags.has("--help");
-  options.steer = flags.has("--steer");
   options.stdin = flags.has("--stdin");
-  options.paused = flags.has("--paused");
-  options.resume = flags.has("--resume");
   options.workspaceNew = flags.has("--workspace-new");
-  for (const name of ["--url", "--token", "--config", "--title", "--cwd", "--repo", "--slug", "--prompt", "--prompt-file", "--session", "--text", "--text-file", "--request-id", "--status", "--limit", "--cursor", "--timeout", "--source", "--actor", "--id", "--state", "--block", "--value", "--value-file", "--revision", "--interval", "--name", "--path", "--branch", "--kind", "--actor", "--state", "--strength", "--title", "--scope", "--name", "--workspace"]) {
+  for (const name of ["--url", "--token", "--config", "--text", "--text-file", "--source", "--actor", "--id", "--kind", "--title", "--scope", "--name", "--reason", "--workspace", "--path", "--state", "--timeout", "--interval"]) {
     const key = name.slice(2).replace(/-([a-z])/g, (_, ch) => ch.toUpperCase());
     const value = takeValue(name);
     if (value !== undefined) options[key] = value;
@@ -143,10 +141,10 @@ function resolveBridge(options) {
   return { url, token, timeoutMs };
 }
 
-function readJsonInput(options, valueKey, fileKey) {
-  const text = String(options[valueKey] ?? readTextInput(options, "", "")).trim() || (fileKey ? String(readTextInput(options, "", fileKey)).trim() : "");
-  if (!text) throw usageError("设置需要 --value 或 --value-file");
-  try { return JSON.parse(text); } catch { throw usageError("设置值不是合法 JSON"); }
+function readTextInput(options, textKey, fileKey) {
+  if (options[fileKey]) return fs.readFileSync(options[fileKey], "utf8");
+  if (options.stdin) return fs.readFileSync(0, "utf8");
+  return options[textKey] ?? "";
 }
 
 async function request(bridge, method, pathname, body) {
@@ -175,12 +173,6 @@ async function request(bridge, method, pathname, body) {
   return payload;
 }
 
-function readTextInput(options, textKey, fileKey) {
-  if (options[fileKey]) return fs.readFileSync(options[fileKey], "utf8");
-  if (options.stdin) return fs.readFileSync(0, "utf8");
-  return options[textKey] ?? "";
-}
-
 function print(payload) {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 }
@@ -199,64 +191,10 @@ async function main() {
       print(await request(bridge, "GET", "/v1/health"));
       return 0;
     }
-    case "create": {
-      if (!options.title) throw usageError("create 需要 --title");
-      if (!options.cwd && !(options.repo && options.slug)) throw usageError("create 需要 --cwd 或 --repo/--slug");
-      const body = {
-        title: options.title,
-        ...(options.cwd ? { cwd: options.cwd } : {}),
-        ...(options.repo ? { repo: options.repo } : {}),
-        ...(options.slug ? { slug: options.slug } : {}),
-        ...(options.thread.length ? { threads: options.thread } : {}),
-        ...(options.requestId ? { requestId: options.requestId } : {}),
-      };
-      const prompt = readTextInput(options, "prompt", "promptFile").trim();
-      if (prompt) body.prompt = prompt;
-      print(await request(bridge, "POST", "/v1/sessions", body));
-      return 0;
-    }
-    case "send": {
-      if (!options.session) throw usageError("send 需要 --session");
-      const text = readTextInput(options, "text", "textFile").trim();
-      if (!text) throw usageError("send 需要 --text、--text-file 或 --stdin");
-      print(await request(bridge, "POST", `/v1/sessions/${encodeURIComponent(options.session)}/messages`, {
-        text,
-        ...(options.steer ? { mode: "steer" } : {}),
-        ...(options.requestId ? { requestId: options.requestId } : {}),
-      }));
-      return 0;
-    }
-    case "list": {
-      const query = new URLSearchParams();
-      if (options.thread.length) query.set("thread", options.thread[0]);
-      if (options.status) query.set("status", options.status);
-      if (options.limit) query.set("limit", options.limit);
-      print(await request(bridge, "GET", `/v1/sessions${query.size ? `?${query}` : ""}`));
-      return 0;
-    }
-    case "show": {
-      if (!options.session) throw usageError("show 需要 --session");
-      print(await request(bridge, "GET", `/v1/sessions/${encodeURIComponent(options.session)}`));
-      return 0;
-    }
-    case "wait": {
-      const query = new URLSearchParams();
-      query.set("cursor", String(Number(options.cursor || 0) || 0));
-      const timeout = Math.max(0, Math.min(120, Number(options.timeout ?? 55) || 0));
-      query.set("timeoutMs", String(Math.round(timeout * 1000)));
-      const payload = await request(bridge, "GET", `/v1/events?${query}`);
-      if (options.session) payload.events = payload.events.filter(event => event.sessionId === options.session);
-      print(payload);
-      return 0;
-    }
-    case "cancel": {
-      if (!options.session) throw usageError("cancel 需要 --session");
-      print(await request(bridge, "POST", `/v1/sessions/${encodeURIComponent(options.session)}/cancel`, {}));
-      return 0;
-    }
-    case "rename": {
-      if (!options.session || !options.title) throw usageError("rename 需要 --session 与 --title");
-      print(await request(bridge, "POST", `/v1/sessions/${encodeURIComponent(options.session)}/title`, { title: options.title }));
+    case "sa-mode": {
+      const mode = String(options._[1] || "").trim();
+      if (mode !== "on" && mode !== "off") throw usageError("sa-mode 需要 on 或 off");
+      print(await request(bridge, "POST", "/v1/engine/mode", { enabled: mode === "on" }));
       return 0;
     }
     case "sa-state": {
@@ -265,7 +203,7 @@ async function main() {
     }
     case "sa-trigger": {
       const text = readTextInput(options, "text", "textFile").trim();
-      if (!text) throw usageError("sa-trigger 需要 --text 或 --text-file");
+      if (!text) throw usageError("sa-trigger 需要 --text、--text-file 或 --stdin");
       print(await request(bridge, "POST", "/v1/engine/triggers", {
         text,
         source: options.source || "feishu",
@@ -273,6 +211,24 @@ async function main() {
         ...(options.actor ? { actor: options.actor } : {}),
         ...(options.id ? { id: options.id } : {}),
         ...(options.strength ? { strength: options.strength } : {}),
+      }));
+      return 0;
+    }
+    case "sa-evaluating": {
+      print(await request(bridge, "GET", "/v1/engine/evaluating"));
+      return 0;
+    }
+    case "sa-decide": {
+      if (!options.id) throw usageError("sa-decide 需要 --id（trigger id）");
+      const kind = options.kind || "accept";
+      print(await request(bridge, "POST", "/v1/engine/decisions", {
+        triggerId: options.id,
+        kind,
+        ...(options.title ? { title: options.title } : {}),
+        ...(options.scope ? { scope: options.scope } : {}),
+        ...(options.name ? { name: options.name } : {}),
+        ...(options.reason ? { reason: options.reason } : {}),
+        ...(options.workspace ? { workspace: options.workspace, workspaceNew: options.workspaceNew === true } : {}),
       }));
       return 0;
     }
@@ -309,19 +265,12 @@ async function main() {
       print(await request(bridge, "GET", "/v1/engine/decisions"));
       return 0;
     }
-    case "sa-settings": {
-      if (!options.block) { print(await request(bridge, "GET", "/v1/engine/settings")); return 0; }
-      const value = readJsonInput(options, "value", "valueFile");
-      print(await request(bridge, "PUT", `/v1/engine/settings/${encodeURIComponent(options.block)}`, {
-        value,
-        ...(options.revision !== undefined ? { revision: Number(options.revision) } : {}),
-      }));
+    case "sa-threads": {
+      print(await request(bridge, "GET", "/v1/engine/threads"));
       return 0;
     }
-    case "sa-mode": {
-      const mode = String(options._[1] || "").trim();
-      if (mode !== "on" && mode !== "off") throw usageError("sa-mode 需要 on 或 off");
-      print(await request(bridge, "POST", "/v1/engine/mode", { enabled: mode === "on" }));
+    case "sa-workers": {
+      print(await request(bridge, "GET", "/v1/engine/workers"));
       return 0;
     }
     case "sa-workspaces": {
@@ -337,60 +286,13 @@ async function main() {
       print(await request(bridge, "POST", "/v1/engine/workspaces", { path: options.path }));
       return 0;
     }
-    case "sa-evaluating": {
-      print(await request(bridge, "GET", "/v1/engine/evaluating"));
-      return 0;
-    }
-    case "sa-decide": {
-      if (!options.id) throw usageError("sa-decide 需要 --id（trigger id）");
-      const kind = options.kind || "accept";
-      print(await request(bridge, "POST", "/v1/engine/decisions", {
-        triggerId: options.id,
-        kind,
-        ...(options.actor ? { actor: options.actor } : {}),
-        ...(options.title ? { title: options.title } : {}),
-        ...(options.scope ? { scope: options.scope } : {}),
-        ...(options.name ? { name: options.name } : {}),
-        ...(options.workspace ? { workspace: options.workspace, workspaceNew: options.workspaceNew === true } : {}),
-      }));
-      return 0;
-    }
-    case "sa-threads": {
-      print(await request(bridge, "GET", "/v1/engine/threads"));
-      return 0;
-    }
-    case "sa-workers": {
-      print(await request(bridge, "GET", "/v1/engine/workers"));
-      return 0;
-    }
     case "sa-repos": {
       print(await request(bridge, "GET", "/v1/engine/repos"));
       return 0;
     }
-    case "sa-repo-add": {
-      if (!options.name) throw usageError("sa-repo-add 需要 --name");
-      print(await request(bridge, "POST", "/v1/engine/repos", {
-        name: options.name,
-        ...(options.path ? { path: options.path } : {}),
-        ...(options.branch ? { defaultBranch: options.branch } : {}),
-      }));
-      return 0;
-    }
-    case "sa-repo-remove": {
-      if (!options.name) throw usageError("sa-repo-remove 需要 --name");
-      print(await request(bridge, "POST", "/v1/engine/repos/remove", { name: options.name }));
-      return 0;
-    }
-    case "sa-pause": {
-      const paused = options.resume ? false : (options.paused ? true : !(await request(bridge, "GET", "/v1/engine/settings")).settings.executor.value.paused);
-      print(await request(bridge, "POST", "/v1/engine/pause", { paused }));
-      return 0;
-    }
-    case "sa-report": {
-      if (!options.id) throw usageError("sa-report 需要 --id（assignment id）");
-      const summary = readTextInput(options, "text", "textFile").trim();
-      if (!summary) throw usageError("sa-report 需要 --text 或 --text-file");
-      print(await request(bridge, "POST", "/v1/engine/reports", { assignmentId: options.id, summary, state: options.state || "ready" }));
+    case "sa-settings": {
+      if (options._.length > 1) throw usageError("sa-settings 是只读命令；修改设置请在 vika 面板的「设置」页操作");
+      print(await request(bridge, "GET", "/v1/engine/settings"));
       return 0;
     }
     default:
@@ -398,12 +300,10 @@ async function main() {
   }
 }
 
-main()
-  .then(code => {
-    if (typeof code === "number" && code !== 0) process.exitCode = code;
-  })
-  .catch(error => {
-    const code = error?.status ? 1 : error?.code === "usage" ? 2 : 1;
-    process.stdout.write(`${JSON.stringify({ ok: false, error: { code: error?.code || "client_error", message: error?.message || String(error) } }, null, 2)}\n`);
-    process.exitCode = code;
-  });
+try {
+  const code = await main();
+  process.exitCode = code ?? 0;
+} catch (error) {
+  process.stdout.write(`${JSON.stringify({ ok: false, error: { code: error?.code || "internal", message: error instanceof Error ? error.message : String(error) } }, null, 2)}\n`);
+  process.exitCode = error?.code === "usage" ? 2 : 1;
+}

@@ -288,3 +288,75 @@ test("speculative：普通事件按投机工单自动尝试", async t => {
   assert.equal(received.ticket.speculative, true);
   assert.equal(received.ticket.state, "working");
 });
+
+test("并发上限=2：第三个排队任务在任一 worker 结束后必然启动", async t => {
+  const { engine, adapter } = await engineWith(t);
+  await engine.updateSettings("executor", { maxWorkers: 2 });
+  const ticketIds = [];
+  for (const key of ["a", "b", "c"]) {
+    const received = await engine.receiveTrigger({ source: "manual", thread: key, text: key, strength: "explicit" });
+    ticketIds.push((await engine.decide(received.trigger.id, { kind: "accept" })).ticket.id);
+  }
+  const assignmentOf = id => engine.state.assignments.find(item => item.ticketId === id);
+  assert.equal(adapter.starts.length, 2);
+  assert.equal(assignmentOf(ticketIds[0]).state, "running");
+  assert.equal(assignmentOf(ticketIds[1]).state, "running");
+  assert.equal(assignmentOf(ticketIds[2]).state, "queued");
+
+  await engine.report(assignmentOf(ticketIds[0]).id, { summary: "a 完成" });
+  assert.equal(adapter.starts.length, 3);
+  assert.equal(assignmentOf(ticketIds[2]).state, "running");
+  assert.equal(new Set(adapter.starts.map(item => item.assignment)).size, 3);
+});
+
+test("并发门是防重入而不是丢唤醒：启动进行中入队的任务仍会启动", async t => {
+  let release;
+  const adapter = {
+    starts: [],
+    async start({ assignment, ticket }) {
+      this.starts.push({ assignment: assignment.id, ticket: ticket.id });
+      if (this.starts.length === 1) await new Promise(resolve => { release = resolve });
+      return { sessionId: `session-${ticket.id}` };
+    },
+    async send() { return { ok: true }; },
+    async stop() {},
+  };
+  const { engine } = await engineWith(t, { adapter });
+  await engine.updateSettings("executor", { maxWorkers: 2 });
+  const receive = key => engine.receiveTrigger({ source: "manual", thread: key, text: key, strength: "explicit" });
+
+  const a = await receive("a");
+  const acceptA = engine.decide(a.trigger.id, { kind: "accept" });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const b = await receive("b");
+  const c = await receive("c");
+  const acceptB = engine.decide(b.trigger.id, { kind: "accept" });
+  const acceptC = engine.decide(c.trigger.id, { kind: "accept" });
+  release();
+  await Promise.all([acceptA, acceptB, acceptC]);
+
+  assert.equal(adapter.starts.length, 2, "并发上限内应启动两个");
+  const queued = engine.state.assignments.filter(item => item.state === "queued");
+  assert.equal(queued.length, 1);
+  await engine.report(engine.state.assignments.find(item => item.state === "running").id, { summary: "先完成的" });
+  assert.equal(adapter.starts.length, 3, "排队任务不能等下一次事件");
+  assert.equal(engine.state.assignments.filter(item => item.state === "running").length, 2);
+});
+
+test("同一 workspace 两次接单：worker session 不复用，同 thread 追问直通原 worker", async t => {
+  const { engine, adapter } = await engineWith(t);
+  const first = await engine.receiveTrigger({ source: "manual", thread: "ws-a", text: "任务一", strength: "explicit" });
+  const ticketA = (await engine.decide(first.trigger.id, { kind: "accept", workspace: "D:/ws" })).ticket;
+  const second = await engine.receiveTrigger({ source: "manual", thread: "ws-b", text: "任务二", strength: "explicit" });
+  const ticketB = (await engine.decide(second.trigger.id, { kind: "accept", workspace: "D:/ws" })).ticket;
+
+  const sessionOf = id => engine.state.assignments.find(item => item.ticketId === id).sessionId;
+  assert.equal(adapter.starts.length, 2);
+  assert.notEqual(sessionOf(ticketA.id), sessionOf(ticketB.id), "每个工单独立 session，不按 workspace 复用");
+
+  // 同一 thread 的后续事件按订阅直通给该工单的 worker（续聊），不会另开 session。
+  const followUp = await engine.receiveTrigger({ source: "manual", thread: "ws-a", text: "再补充一句" });
+  assert.equal(followUp.routed, true);
+  assert.equal(adapter.starts.length, 2);
+  assert.equal(engine.listWorkers().filter(item => item.active === true).length, 2);
+});

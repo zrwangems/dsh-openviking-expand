@@ -14,6 +14,7 @@ import { randomBytes } from "node:crypto";
 import { promisify } from "node:util";
 import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { readdirSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const execFileAsync = promisify(execFile);
@@ -103,6 +104,53 @@ async function copyHostFile(container, hostFile, containerFile) {
 }
 
 /**
+ * 让 /dshin、/dshout、/dshnew 不被 Vika 本地命令解析器截获，而是作为普通消息交给模型。
+ *
+ * 只能改容器内源码，因此必须能验证补丁真的写进去了：匹配不到（Vika 版本/目录变化）时明确报告，
+ * 不能静默跳过却显示配置成功。纯函数单独导出，便于单测；写盘与读回在 allowRouterCommands 里。
+ *
+ * @param {string} text 原始 commands.mjs 文本。
+ * @returns {{text: string, patched: boolean}} patched=false 表示这段源码里没有可插入的锚点。
+ */
+export function applyRouterCommandAllowlist(text) {
+  if (typeof text !== "string" || text === "") return { text, patched: false };
+  const guard = 'if (["dshin","dshout","dshnew"].includes(token.toLowerCase())) return null;';
+  let next = text.replace(/\n\s*if \(\["dshin"[^\n]*\n/g, "\n");
+  if (next.includes(guard)) return { text: next, patched: true };
+  const inserted = next.replace(/(\n\s*const \[token = [^\n]*\n)/, `$1  ${guard}\n`);
+  if (inserted === next) return { text, patched: false };
+  return { text: inserted, patched: true };
+}
+
+/** 对容器里的候选命令解析器打补丁并读回校验；返回命中、缺锚点与文件不存在三类文件。 */
+async function allowRouterCommands(container) {
+  const files = [
+    "/root/.vika/current/packages/daemon/src/commands.mjs",
+    "/root/.vika/current/node_modules/@vika/daemon/src/commands.mjs",
+  ];
+  const patched = [];
+  const unmatched = [];
+  const missing = [];
+  for (const file of files) {
+    let text;
+    try { text = await readContainerFile(container, file); } catch { missing.push(file); continue; }
+    const result = applyRouterCommandAllowlist(text);
+    if (!result.patched) { unmatched.push(file); continue; }
+    if (result.text !== text) {
+      const tmp = path.join(pluginTmpDir(), `.vika-command-${process.pid}-${Date.now()}.mjs`);
+      await mkdir(path.dirname(tmp), { recursive: true });
+      await writeFile(tmp, result.text, "utf8");
+      await copyHostFile(container, tmp, file);
+      await rm(tmp, { force: true });
+      const written = await readContainerFile(container, file).catch(() => "");
+      if (!written.includes('if (["dshin","dshout","dshnew"]')) { unmatched.push(file); continue; }
+    }
+    patched.push(file);
+  }
+  return { patched, unmatched, missing };
+}
+
+/**
  * 一键配置一个已存在的 Vika 容器。
  *
  * 不写宿主工作区、不创建额外目录：工具和桥配置直接部署进容器
@@ -110,28 +158,6 @@ async function copyHostFile(container, hostFile, containerFile) {
  *
  * @param options `{container, settings, pluginRoot, log}`；settings 是 normalizeSettings 后的对象。
  */
-/** 让 /dshin、/dshout、/dshnew 不被 Vika 本地命令解析器截获，而是作为普通消息交给模型。 */
-async function allowRouterCommands(container) {
-  const files = [
-    "/root/.vika/current/packages/daemon/src/commands.mjs",
-    "/root/.vika/current/node_modules/@vika/daemon/src/commands.mjs",
-  ];
-  for (const file of files) {
-    let text;
-    try { text = await readContainerFile(container, file); } catch { continue; }
-    let next = text.replace(/\n\s*if \(\["dshin"[^\n]*\n/g, "\n");
-    if (!next.includes('if (["dshin","dshout","dshnew"]')) {
-      next = next.replace(/(\n\s*const \[token = [^\n]*\n)/, '$1  if (["dshin","dshout","dshnew"].includes(token.toLowerCase())) return null;\n');
-    }
-    if (next === text) continue;
-    const tmp = path.join(process.cwd(), "AgentsDo", "tmp", `.vika-command-${process.pid}-${Date.now()}.mjs`);
-    await mkdir(path.dirname(tmp), { recursive: true });
-    await writeFile(tmp, next, "utf8");
-    await copyHostFile(container, tmp, file);
-    await rm(tmp, { force: true });
-  }
-}
-
 export async function configureVikaContainer({ container, settings, pluginRoot, log = () => {} }) {
   if (!CONTAINER_NAME.test(String(container || ""))) throw new Error("容器名不合法");
   const vika = settings.vika || {};
@@ -160,11 +186,21 @@ export async function configureVikaContainer({ container, settings, pluginRoot, 
   try { token = (await readFile(path.join(workspace, ".vika", "state", "bridge.token"), "utf8")).trim() } catch { /* 首次 */ }
   if (token === "") token = randomBytes(24).toString("base64url");
   const bridgeUrl = `http://host.docker.internal:${Number(vika.bridgePort) || 3742}`;
-  const bridgeConfigText = JSON.stringify({ url: bridgeUrl, token, timeoutMs: 60000 }, null, 2) + "\n";
+  // gh-work 用这些宿主路径把容器里的 /workspace/... 翻译成宿主绝对路径；缺了它们 worker 会拿到容器路径。
+  const hostWorkspace = normalizePath(workspace);
+  const bridgeConfig = {
+    url: bridgeUrl,
+    token,
+    timeoutMs: 60000,
+    hostWorkspace,
+    hostReposRoot: `${hostWorkspace}/repos`,
+    hostTasksRoot: `${hostWorkspace}/tasks`,
+  };
+  const bridgeConfigText = JSON.stringify(bridgeConfig, null, 2) + "\n";
   await writeContainerFile(container, "/root/.dsh-bridge.json", bridgeConfigText);
   steps.push("桥配置已写入容器 /root/.dsh-bridge.json");
 
-  const tmpDir = path.join(pluginRoot, "..", "tmp");
+  const tmpDir = pluginTmpDir();
   await mkdir(tmpDir, { recursive: true });
 
   // 角色 = 容器里的 colleague.md + 本插件角色段。
@@ -188,8 +224,14 @@ export async function configureVikaContainer({ container, settings, pluginRoot, 
   await rm(roleTmp, { force: true });
   steps.push(`角色已生成：${rolePath}`);
 
-  await allowRouterCommands(container);
-  steps.push("/dshin、/dshout、/dshnew 已放行给 Vika 模型");
+  const allowlist = await allowRouterCommands(container);
+  if (allowlist.patched.length > 0) {
+    steps.push(`/dshin、/dshout、/dshnew 已放行给 Vika 模型（${allowlist.patched.length} 个命令解析器）`);
+  }
+  if (allowlist.unmatched.length > 0) {
+    log("warn", `vika: 命令解析器补丁未命中，/dshin 可能仍被 Vika 当成本地命令：${allowlist.unmatched.join(", ")}`);
+    steps.push(`警告：/dshin 放行补丁未命中，请检查 ${allowlist.unmatched.join(", ")}`);
+  }
 
   const configText = await readContainerFile(container, "/root/.vika/config.json");
   const config = JSON.parse(configText);
@@ -359,9 +401,9 @@ export async function resetVikaContainer({ container, workspace, log = () => {} 
   return { container, steps, hostState };
 }
 
-/** 插件临时文件放在项目 AgentsDo/tmp，不写 Vika 工作区。 */
+/** 插件临时文件只放系统临时目录：不写项目目录，也不创建 AgentsDo。 */
 function pluginTmpDir() {
-  return path.join(process.cwd(), "AgentsDo", "tmp");
+  return path.join(os.tmpdir(), "dsh-openviking-expand");
 }
 
 

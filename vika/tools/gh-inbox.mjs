@@ -8,7 +8,7 @@
  * 用法：
  *   gh-inbox [--limit 30] [--repo owner/name] [--mark-read]
  */
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
 const HELP = `gh-inbox ${VERSION}
 
 用法：
