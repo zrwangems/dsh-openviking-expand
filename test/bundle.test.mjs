@@ -21,6 +21,20 @@ test("lib/client.js 是懒 CJS 信封，且导出 inject/apply", () => {
   assert.match(bundle, /OVX_ITEM_TAB/);
 });
 
+test("vika 面板注册在运行时上线后自动重试，且不依赖 bootstrap 成功", () => {
+  const bundle = readFileSync(join(root, "lib", "client.js"), "utf8");
+  // 面板注册不能是页面加载时的一次性探测：运行时晚就绪时要能补上。
+  assert.match(bundle, /VK_PANEL_RETRY_MIN_MS/);
+  assert.match(bundle, /VK_PANEL_RETRY_MAX_MS/);
+  assert.match(bundle, /vikaRuntimeProbe/);
+  assert.match(bundle, /vika 面板客户端无法装载/);
+  // vika 注册必须在 bootstrap 成功分支之外调用。
+  const vikaCall = bundle.indexOf("vikaRuntimePart.apply(ctx)");
+  const bootstrap = bundle.indexOf("Promise.all([ovxRequest('/bootstrap'");
+  assert.ok(vikaCall > 0 && bootstrap > 0, "入口应同时包含 vika 注册与 bootstrap 加载");
+  assert.ok(vikaCall < bootstrap, "vika 面板注册不应挂在 bootstrap 成功分支里");
+});
+
 test("片段里不出现 import/export（必须共享同一工厂作用域）", () => {
   const dir = join(root, "client");
   for (const name of readdirSync(dir)) {

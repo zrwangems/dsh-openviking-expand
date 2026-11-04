@@ -178,6 +178,9 @@ function ovxApplySidebar(ctx) {
 function ovxApply(ctx) {
   // 插件页里的 OpenViking 连接配置（bundle/row config 插槽），与组件开关无关。
   connectPart.apply(ctx)
+  // vika 面板的注册独立于 OpenViking 连接配置：它探测的是 vika 运行时自己的路由。
+  // 放在 bootstrap 失败分支之外，避免宿主启动竞争时把面板一起丢掉。
+  vikaRuntimePart.apply(ctx)
   // 壳层只装配：哪些界面组件启用由宿主 bootstrap 决定；同时读插件设置判断是否已配置。
   Promise.all([ovxRequest('/bootstrap', null), ovxRequest('/settings', null)]).then(function (results) {
     var payload = results[0]
@@ -196,8 +199,6 @@ function ovxApply(ctx) {
     }
     if (components.console !== false) consolePart.apply(ctx)
     if (components.sidebar !== false) ovxApplySidebar(ctx)
-    // vika 面板：vendored vika 面板，宿主运行时可用时才注册。
-    vikaRuntimePart.apply(ctx)
   }, function () {
     /* 宿主没有启用任何界面组件 */
   })
