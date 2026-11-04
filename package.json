@@ -1,6 +1,6 @@
 {
   "name": "dsh-openviking-expand",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "OpenViking bundle for DeepSeek Harness: Studio console, viking:// sidebar, and a vendored vika panel where Vika is the router and DSH sessions are workers",
   "license": "AGPL-3.0-only",
   "author": "zrwangems",
