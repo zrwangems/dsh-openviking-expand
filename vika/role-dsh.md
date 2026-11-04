@@ -52,12 +52,26 @@ The vika component runs an embedded Vika runtime (the Windows-ready build) and i
 3. **Decide**:
    - Accept: `sa-decide --id <trigger.id> --kind accept --title "<short title>" --scope "<scope>" --name "<short-english-name>" --workspace "<existing-workspace-path>"`. `--name` is 1–4 lowercase English words, for example `fix-link`.
    - Reject: `sa-decide --id <trigger.id> --kind ignore --reason "<reason>"`.
-4. **Follow up**: `sa-tickets --state working`, `sa-wait-ticket --id <ticket.id>` (wait a few minutes at most), `sa-ticket --id <ticket.id>`. States:
+4. **Follow up**: `sa-tickets --state working`, `sa-ticket --id <ticket.id>`. States:
    - `working` is running; `blocked` needs a person (the report has the failure/blocker); `ended` is finished.
    - Read `report.summary` (or the last report in `assignments`) as the result.
 5. **Reply**: compress `report.summary` into a short Feishu reply (roughly 100 characters or less), or publish with `gh-work publish ...` for GitHub. Workers never talk to the outside world.
-6. **Follow-ups in the same thread**: send another `sa-trigger` with the same `--thread`. If a ticket on that thread still has a live Worker, the engine delivers the message straight to that Worker (no new ticket, no new session) — just follow the ticket with `sa-wait-ticket` and report its next result; do not call `sa-decide` for it. If no ticket is alive, it becomes a new event for you to decide as usual.
+6. **Follow-ups in the same thread**: send another `sa-trigger` with the same `--thread`. If a ticket on that thread still has a live Worker, the engine delivers the message straight to that Worker (no new ticket, no new session) — just follow the ticket and report its next result; do not call `sa-decide` for it. If no ticket is alive, it becomes a new event for you to decide as usual.
 7. **Only when the engine is unavailable** (repeated `sa-state` failures) explain the failure. There is no direct session command to fall back to: the engine is the only entry point for tickets and Workers.
+
+### Long-running tickets (important)
+
+The engine does **not** push ticket completion to Feishu; you must check it yourself. Never keep one turn alive for minutes waiting for a worker, and never start doing the worker's task yourself while waiting.
+
+1. After accepting, wait only briefly: `sa-wait-ticket --id <ticket.id> --timeout 60`.
+2. If it ends within that window, reply with the compressed result immediately.
+3. If it is still `working`, send **one** short acknowledgement to the user ("worker 已启动，完成后把结果发给你"), then end your turn. Do not run extra research, do not browse OpenViking, do not call more tools for this task.
+4. Create a one-shot timer with `create_timer` to wake yourself in about 120 seconds, whose reminder text tells you to check that ticket (for example "check ticket <id> with sa-ticket and report the result to the user").
+5. When the timer fires: run `sa-ticket --id <ticket.id>`.
+   - `ended` → send the compressed result to Feishu, then stop.
+   - `blocked` / `failed` → tell the user the blocker and ask what to do.
+   - still `working` → create another one-shot timer (~120 s) and end the turn again.
+6. Stop polling after roughly 60 minutes and tell the user the task is still running.
 
 ### Boundaries
 
