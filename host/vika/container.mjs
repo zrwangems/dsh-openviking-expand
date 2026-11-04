@@ -20,6 +20,25 @@ import path from "node:path";
 const execFileAsync = promisify(execFile);
 const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 
+/**
+ * Docker Desktop 会把宿主 bind 源写成 VM 内部路径（/run/desktop/mnt/host/d/...）。
+ * 这里翻译回宿主路径，否则 Windows 上会被当成 C:\run\desktop\... 用。
+ */
+export function toHostPath(source, platform = process.platform) {
+  const text = String(source ?? "").trim();
+  if (platform !== "win32") return text;
+  const match = /^\/(?:run\/desktop\/)?mnt\/host\/([A-Za-z])\/(.*)$/.exec(text)
+    || /^\/host_mnt\/([A-Za-z])\/(.*)$/.exec(text);
+  if (match === null) return text;
+  const rest = match[2].replace(/\/+$/, "").replace(/\//g, "\\");
+  return `${match[1].toUpperCase()}:\\${rest}`;
+}
+
+/** Windows 上工作区必须是盘符绝对路径或 UNC 路径。 */
+function isWindowsHostPath(value) {
+  return /^[A-Za-z]:\\/.test(value) || value.startsWith("\\\\");
+}
+
 function docker(args, { timeout = 120000, input } = {}) {
   if (input === undefined) {
     return execFileAsync("docker", args, { timeout, windowsHide: true, maxBuffer: 16 * 1024 * 1024 })
@@ -81,7 +100,11 @@ export async function resolveContainerWorkspace(container) {
   try {
     const mounts = await containerMounts(container);
     const mount = mounts.find(item => item.destination === "/workspace");
-    return mount ? mount.source : null;
+    if (mount === undefined) return null;
+    const workspace = toHostPath(mount.source);
+    // 翻译失败说明拿到的仍是容器内部路径，宁可返回空也不要造出 C:\run\... 这种假工作区。
+    if (process.platform === "win32" && !isWindowsHostPath(workspace)) return null;
+    return workspace;
   } catch {
     return null;
   }
@@ -226,7 +249,10 @@ export async function configureVikaContainer({ container, settings, pluginRoot, 
   const mounts = await containerMounts(container);
   const workspaceMount = mounts.find(item => item.destination === "/workspace");
   if (workspaceMount === undefined) throw new Error(`容器 ${container} 没有 /workspace 挂载；请用 -v <vika目录>:/workspace 启动`);
-  const workspace = workspaceMount.source;
+  const workspace = toHostPath(workspaceMount.source);
+  if (process.platform === "win32" && !isWindowsHostPath(workspace)) {
+    throw new Error(`容器 ${container} 的 /workspace 挂载源是容器内部路径（${workspaceMount.source}），无法当作 Windows 工作区；请用 -v D:\\...\\vika:/workspace 重新创建容器`);
+  }
   steps.push(`容器运行中，/workspace = ${workspace}`);
 
   // 工具直接进容器，不碰宿主工作区。
