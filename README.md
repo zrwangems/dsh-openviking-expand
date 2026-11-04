@@ -84,7 +84,7 @@ node scripts/build-client.mjs
 dsh plugin --profile web add .
 ```
 
-安装后在插件列表确认「OpenViking 扩展」已启用，硬刷新浏览器。`vika` 组件默认关闭，需要时在插件页单独打开。
+安装后在插件列表确认「OpenViking 扩展」已启用，硬刷新浏览器。`vika` 组件默认关闭，需要时在插件页单独打开；打开后面板会在 vika 运行时就绪后自动出现（最多约 30 秒），不需要刷新页面。
 
 ## 配置
 
@@ -118,12 +118,26 @@ dsh plugin --profile web add .
 6. 给容器里的命令解析器打 /dshin、/dshout、/dshnew 放行补丁（在解析 token 之后插入放行判断），改完读回验证；
 7. 把容器 config.json 的 agents[0].role 指向 /root/.vika/roles/vika.md；
 8. 重启 Vika，确认 primary/web/updater 就绪，并执行容器内的 dsh-bridge health 检查桥；
-9. 最后告诉我：每一步结果、改了哪些文件、如何回滚。
+9. 验证角色真的加载进了守护进程：找到 vika daemon 进程，读 /proc/<pid>/environ，确认有 VIKA_ROLE=/root/.vika/roles/vika.md。如果缺失（0.4.0 源码构建的已知缺陷：ecosystem.config.cjs 拼 daemon 环境时漏了 VIKA_ROLE，config.json 的 role 在这个构建上是死字段），先备份 /root/.vika/current/ecosystem.config.cjs，在 daemon env 的 VIKA_AGENT_NAME 行后插入一行 VIKA_ROLE: agent.role || ''，用容器自带 node 对文件跑 --check，重启后重新验证；这个补丁在 Vika 升级后会被覆盖，升级后要重新检查；
+10. 最后告诉我：每一步结果、改了哪些文件、如何回滚（包括 /dshin 放行补丁和 VIKA_ROLE 注入补丁的还原方式）。
 
 约束：不要删除容器或数据卷；不要改飞书/OpenViking/模型配置；不要执行 vika setup（除非第 5 题里我明确同意）；所有删除/覆盖前先备份。
 ```
 
 Vika 自己的飞书、OpenViking、模型配置用 Vika 的 setup 完成，插件不保存这些凭据。
+
+### 已知问题：源码构建的 Vika 缺 VIKA_ROLE 注入
+
+部分从源码构建的 Vika（例如 0.4.0）在 `ecosystem.config.cjs` 拼 daemon 环境时漏掉了 `VIKA_ROLE`，而 daemon 只认这个环境变量；`config.json` 里的 `agents[0].role` 在这些构建上是死字段——角色文件写得再对，模型也拿不到 DSH 指示。
+
+接线提示词第 9 步会检查 daemon 环境里的 `VIKA_ROLE`，缺失时按下面的方式打补丁（先备份，改完验证）：
+
+1. 在 daemon env 的 `VIKA_AGENT_NAME: agent.displayName,` 行后插入 `VIKA_ROLE: agent.role || '',`；
+2. 用 Vika 自带的 node 对 `ecosystem.config.cjs` 跑 `--check`；
+3. `vika restart` 后重新读 `/proc/<pid>/environ`，确认 `VIKA_ROLE` 已生效；
+4. 回滚就是还原备份并重启。
+
+`ecosystem.config.cjs` 的 `VIKA_ROLE` 注入和 `commands.mjs` 的 `/dshin`、`/dshout`、`/dshnew` 放行补丁都改在 release 源码里，**Vika 升级或重装后会被覆盖**：升级后重新检查这两处，不在就按同样方式重打。
 
 ## 使用
 
