@@ -31,7 +31,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const VERSION = "0.2.3";
+const VERSION = "0.2.4";
 const DEFAULT_URL = "http://host.docker.internal:3742";
 const CONFIG_CANDIDATES = [
   process.env.DSH_BRIDGE_CONFIG,
