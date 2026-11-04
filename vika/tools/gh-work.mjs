@@ -19,7 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-const VERSION = "0.2.2";
+const VERSION = "0.2.3";
 function loadToolsConfig() {
   const candidates = [process.env.VIKA_TOOLS_CONFIG, "/root/.vika-tools.json", "/root/.dsh-bridge.json"].filter(Boolean);
   for (const candidate of candidates) {
