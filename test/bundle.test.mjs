@@ -30,6 +30,19 @@ test("片段里不出现 import/export（必须共享同一工厂作用域）", 
   }
 });
 
+test("插件设置页不再包含 vika 配置（改为 README 提示词）", () => {
+  const connect = readFileSync(join(root, "client", "connect.mjs"), "utf8");
+  const bundle = readFileSync(join(root, "lib", "client.js"), "utf8");
+  for (const text of [connect, bundle]) {
+    assert.doesNotMatch(text, /openviking-vika-config/, "不应再有 vika 配置接口调用");
+    assert.doesNotMatch(text, /VikaSettingsForm/, "不应再有 vika 配置表单");
+    assert.doesNotMatch(text, /一键配置 Vika|恢复 Vika 原始接线/, "不应再有 vika 配置按钮");
+  }
+  const host = readFileSync(join(root, "host", "index.mjs"), "utf8");
+  assert.doesNotMatch(host, /config-routes|mountVikaConfigRoutes/, "壳层不应再挂载 vika 配置路由");
+  assert.equal(existsSync(join(root, "host", "vika", "config-routes.mjs")), false, "config-routes.mjs 应已删除");
+});
+
 test("package.json 与 cordis.patch.yml、entry 导出一致", () => {
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   assert.equal(pkg.name, "dsh-openviking-expand");

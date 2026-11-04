@@ -46,12 +46,11 @@ Vika 是 Router，DSH 的每个物理会话是 Worker：
 
 - 完整 vika 管理面板：概览、触发、评估、执行、设置；
 - Vika 容器通过本地回环桥调用 DSH：触发、评估、接单、工单、worker 报告；
-- 内置 `vika-router` 与 `vika-worker` 两个固定 agent preset；
-- 一键检测/配置 Vika 容器：部署工具、角色、桥配置并重启；
-- 一键恢复：删除插件注入内容，恢复 Vika 原始角色；
-- GitHub CLI 安装/登录入口；GitHub 凭据只留在 Vika 容器。
+- 内置 `vika-router` 与 `vika-worker` 两个固定 agent preset。
 
 **vika 组件默认关闭**：安装后只启用 console / sidebar，不会启动桥和 vika 运行时；需要时在插件页把 `vika` 行打开。
+
+**容器接线不再由插件界面注入**：插件不再提供 vika 配置页，也不修改 Vika 容器。工具、角色、桥配置和 `/dshin` 放行补丁请按下方 [vika 接线（用提示词配置）](#vika-接线用提示词配置) 的提示词完成。
 
 Vika 本体、OpenViking 服务、飞书机器人都需要用户自己部署；插件不安装、不删除容器。
 
@@ -93,14 +92,36 @@ dsh plugin --profile web add .
 
 配置服务类型、地址、语言和密钥。也可以在嵌入的 Studio 里添加连接，侧边栏会跟随 Studio 当前选中的连接。
 
-### vika 页
+### vika 接线（用提示词配置）
 
-1. 选择/检测已运行的 Vika 容器；
-2. 点「一键配置 Vika」：部署工具、角色、桥配置，并重启 Vika；
-3. 需要 GitHub 时点「安装/登录 GitHub CLI」；
-4. 需要撤销插件注入时点「恢复 Vika 原始接线」。
+插件不再提供 vika 容器配置界面，也不会自己修改 Vika 容器。把下面整段提示词发给一个能操作 Docker 的 AI 助手（例如 DSH 里的 agent），它会先向你确认信息，再按步骤配置；任何一步失败都会停下来问你。
 
-Vika 的工作区直接取容器 `/workspace` 的宿主挂载目录；插件不要求用户另配工作区、bridge token、GitHub 身份或分支前缀。
+```text
+你是我的 Vika 接入配置助手。目标：把 dsh-openviking-expand 的 vika 组件接到我已有的 Vika 容器上。
+
+先不要动任何文件，按顺序问我下面这些问题，等我逐项回答后再开始：
+1. Vika 容器名是什么？（docker ps -a 里名字或镜像带 vika 的那个）
+2. 这个容器的 /workspace 挂载到宿主哪个绝对目录？
+3. 插件桥监听地址和端口？（默认 127.0.0.1:3742，可改）
+4. 容器里的 Vika 现在是否已运行？vika status 的输出是什么？
+5. 飞书、OpenViking、模型是否已经用 vika setup 配好？没配好要不要先帮你完成 setup？
+6. 是否需要 GitHub CLI（gh）能力？容器里是否已经安装/登录过 gh？
+7. 是否允许重启 Vika 守护进程/容器？什么时候可以重启？
+8. DSH 侧是否已安装 dsh-openviking-expand，并在插件页打开了 vika 行？
+
+拿到答案后按下面步骤执行，每一步做完告诉我结果；任何一步失败就停下问我，不要跳过：
+1. 找到已安装的插件包（DSH profile 的 node_modules/dsh-openviking-expand），读取 vika/role-dsh.md、vika/role-github.md、vika/tools/*.mjs；
+2. 备份容器 /root/.vika/config.json、/root/.vika/roles/vika.md（如存在）；
+3. 把 vika/tools/*.mjs 复制到容器 /root/.vika/tools/；
+4. 用容器里的 colleague.md 加上 role-dsh.md、role-github.md 生成 /root/.vika/roles/vika.md，把 {{AGENT_NAME}} 替换成容器 config.json 里 agents[0].displayName；
+5. 写 /root/.dsh-bridge.json：url 用 http://host.docker.internal:<端口>，token 随机生成并保存到宿主工作区 .vika/state/bridge.token，hostWorkspace 用第 2 题的目录，hostReposRoot 和 hostTasksRoot 分别用它的 repos、tasks 子目录；
+6. 给容器里的命令解析器打 /dshin、/dshout、/dshnew 放行补丁（在解析 token 之后插入放行判断），改完读回验证；
+7. 把容器 config.json 的 agents[0].role 指向 /root/.vika/roles/vika.md；
+8. 重启 Vika，确认 primary/web/updater 就绪，并执行容器内的 dsh-bridge health 检查桥；
+9. 最后告诉我：每一步结果、改了哪些文件、如何回滚。
+
+约束：不要删除容器或数据卷；不要改飞书/OpenViking/模型配置；不要执行 vika setup（除非第 5 题里我明确同意）；所有删除/覆盖前先备份。
+```
 
 Vika 自己的飞书、OpenViking、模型配置用 Vika 的 setup 完成，插件不保存这些凭据。
 
@@ -175,7 +196,7 @@ DSH 浏览器
 - vika 桥只绑 `127.0.0.1`，只接受回环请求，所有请求需要 Bearer token；
 - Worker 的 cwd 必须来自已有 DSH 工作区；
 - GitHub 凭据只在 Vika 容器内，worker 不接触；
-- 一键恢复会撤销插件的全部改动：删除注入到容器的工具/桥配置/角色、撤销 `/dshin` 命令解析补丁、清除 GitHub CLI 登录态与 git 身份（插件安装的 gh 会卸载），并恢复内置 `colleague` 角色；Vika 的飞书/OV/模型配置保留。
+- 插件不再向 Vika 容器注入工具/角色/桥配置，也不提供一键配置/恢复界面；容器接线由用户按 README 提示词执行，插件本身不修改容器。
 
 ## 开发
 
