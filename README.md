@@ -175,7 +175,7 @@ DSH 浏览器
 - vika 桥只绑 `127.0.0.1`，只接受回环请求，所有请求需要 Bearer token；
 - Worker 的 cwd 必须来自已有 DSH 工作区；
 - GitHub 凭据只在 Vika 容器内，worker 不接触；
-- 一键恢复会删除插件注入到容器的工具、桥配置和角色，并恢复内置 `colleague` 角色；Vika 的飞书/OV/模型配置以及 gh 登录会保留。
+- 一键恢复会撤销插件的全部改动：删除注入到容器的工具/桥配置/角色、撤销 `/dshin` 命令解析补丁、清除 GitHub CLI 登录态与 git 身份（插件安装的 gh 会卸载），并恢复内置 `colleague` 角色；Vika 的飞书/OV/模型配置保留。
 
 ## 开发
 

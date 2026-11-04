@@ -150,6 +150,39 @@ async function allowRouterCommands(container) {
   return { patched, unmatched, missing };
 }
 
+/** 撤销 /dshin 放行补丁：只删除插件插入的那一行，其它源码不动。 */
+export function removeRouterCommandAllowlist(text) {
+  if (typeof text !== "string" || text === "") return { text, removed: false };
+  const next = text.replace(/\n[ \t]*if \(\["dshin","dshout","dshnew"\]\.includes\(token\.toLowerCase\(\)\)\) return null;[ \t]*\n/g, "\n");
+  return { text: next, removed: next !== text };
+}
+
+/** 还原容器里的候选命令解析器；返回实际撤销、缺补丁与文件不存在的三类文件。 */
+async function revertRouterCommands(container) {
+  const files = [
+    "/root/.vika/current/packages/daemon/src/commands.mjs",
+    "/root/.vika/current/node_modules/@vika/daemon/src/commands.mjs",
+  ];
+  const reverted = [];
+  const unmatched = [];
+  const missing = [];
+  for (const file of files) {
+    let text;
+    try { text = await readContainerFile(container, file); } catch { missing.push(file); continue; }
+    const result = removeRouterCommandAllowlist(text);
+    if (!result.removed) { unmatched.push(file); continue; }
+    const tmp = path.join(pluginTmpDir(), `.vika-command-revert-${process.pid}-${Date.now()}.mjs`);
+    await mkdir(path.dirname(tmp), { recursive: true });
+    await writeFile(tmp, result.text, "utf8");
+    await copyHostFile(container, tmp, file);
+    await rm(tmp, { force: true });
+    const written = await readContainerFile(container, file).catch(() => "");
+    if (written.includes('if (["dshin","dshout","dshnew"]')) { unmatched.push(file); continue; }
+    reverted.push(file);
+  }
+  return { reverted, unmatched, missing };
+}
+
 /**
  * 一键配置一个已存在的 Vika 容器。
  *
@@ -269,10 +302,67 @@ export async function configureVikaContainer({ container, settings, pluginRoot, 
 }
 
 
+/** 插件会写死的 git 全局键；恢复时按安装前备份还原。 */
+const GIT_IDENTITY_KEYS = ["user.login", "user.name", "user.email", "credential.helper", "init.defaultBranch"];
+const GIT_IDENTITY_BACKUP = "/root/.vika/.plugin-git-identity-backup.json";
+const GITHUB_MARKER = "/root/.vika/.plugin-github.json";
+
 /** 用已登录的 gh 账号写 git 全局身份，供 gh-work 自动读取。 */
 async function configureGitIdentity(container) {
   const script = "login=$(gh api user --jq .login) && git config --global user.login \"$login\" && git config --global user.name \"$login\" && git config --global user.email \"$login@users.noreply.github.com\" && git config --global credential.helper '!gh auth git-credential' && git config --global init.defaultBranch main";
   await docker(["exec", container, "sh", "-lc", script], { timeout: 60000 });
+}
+
+/** 记录插件改动前的 git 全局配置（只记一次，避免被插件写入的值覆盖备份）。 */
+async function backupGitIdentity(container) {
+  try { await readContainerFile(container, GIT_IDENTITY_BACKUP); return; } catch { /* 首次 */ }
+  const values = {};
+  for (const key of GIT_IDENTITY_KEYS) {
+    try {
+      const result = await docker(["exec", container, "git", "config", "--global", "--get", key], { timeout: 30000 });
+      values[key] = result.stdout.trim() || null;
+    } catch { values[key] = null; }
+  }
+  await writeContainerFile(container, GIT_IDENTITY_BACKUP, `${JSON.stringify(values, null, 2)}\n`);
+}
+
+/** 恢复 git 全局配置：有备份按备份还原，没有备份时只清理明显由插件写入的值。 */
+async function restoreGitIdentity(container) {
+  let backup = null;
+  try { backup = JSON.parse(await readContainerFile(container, GIT_IDENTITY_BACKUP)); } catch { backup = null; }
+  if (backup !== null && typeof backup === "object") {
+    for (const key of GIT_IDENTITY_KEYS) {
+      const value = backup[key];
+      const argv = value === null || value === undefined
+        ? ["exec", container, "git", "config", "--global", "--unset-all", key]
+        : ["exec", container, "git", "config", "--global", key, String(value)];
+      await docker(argv).catch(() => {});
+    }
+    return true;
+  }
+  const script = [
+    'login=$(git config --global --get user.login 2>/dev/null || true)',
+    'if [ -n "$login" ]; then git config --global --unset-all user.login 2>/dev/null || true; git config --global --unset-all user.name 2>/dev/null || true; fi',
+    'email=$(git config --global --get user.email 2>/dev/null || true)',
+    'case "$email" in *"@users.noreply.github.com") git config --global --unset-all user.email 2>/dev/null || true ;; esac',
+    'helper=$(git config --global --get credential.helper 2>/dev/null || true)',
+    '[ "$helper" = "!gh auth git-credential" ] && git config --global --unset-all credential.helper 2>/dev/null || true',
+    'branch=$(git config --global --get init.defaultBranch 2>/dev/null || true)',
+    '[ "$branch" = "main" ] && git config --global --unset-all init.defaultBranch 2>/dev/null || true',
+    "true",
+  ].join("\n");
+  await docker(["exec", container, "sh", "-lc", script]).catch(() => {});
+  return false;
+}
+
+/** 读取 GitHub 插件改动标记；不存在时返回空对象。 */
+async function readGithubMarker(container) {
+  try { return JSON.parse(await readContainerFile(container, GITHUB_MARKER)); } catch { return {}; }
+}
+
+/** 写入 GitHub 插件改动标记。 */
+async function writeGithubMarker(container, marker) {
+  await writeContainerFile(container, GITHUB_MARKER, `${JSON.stringify(marker, null, 2)}\n`);
 }
 
 /** 在 Vika 容器里安装 GitHub CLI 并开始网页登录（设备码）。 */
@@ -282,11 +372,23 @@ export async function githubSetup({ container, log = () => {} }) {
   if (String(inspect.stdout).trim() !== "true") throw new Error(`容器 ${container} 没有运行`);
   const steps = [];
 
+  // 记录插件的改动范围：恢复时只卸载插件装的 gh、只清插件建立的登录态与 git 身份。
+  const marker = await readGithubMarker(container);
+  const hadGh = await docker(["exec", container, "sh", "-lc", "command -v gh >/dev/null 2>&1"]).then(() => true, () => false);
+  let hadAuth = false;
+  if (hadGh) {
+    try {
+      const status = await docker(["exec", container, "sh", "-lc", "gh auth status"], { timeout: 30000 });
+      hadAuth = status.stdout.trim() !== "";
+    } catch { hadAuth = false; }
+  }
+  await writeGithubMarker(container, { ...marker, installedGh: marker.installedGh === true || !hadGh, hadAuth });
+  await backupGitIdentity(container);
+
   // /root/.config/gh 可能是指向数据卷 tools/gh/config 的符号链接；先把目标目录建好，否则 gh 无法保存登录态。
   await docker(["exec", container, "sh", "-lc", "mkdir -p /root/.vika/tools/gh/config /root/.config"]);
 
-  let hasGh = false;
-  try { await docker(["exec", container, "sh", "-lc", "command -v gh >/dev/null 2>&1"]); hasGh = true } catch { hasGh = false }
+  const hasGh = hadGh;
   if (!hasGh) {
     const install = [
       "if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y gh;",
@@ -348,8 +450,10 @@ export async function githubStatus({ container }) {
 }
 
 /**
- * 还原 Vika 接线：删除插件注入的工具/桥配置/角色，把 config.json 的角色恢复为内置 colleague。
- * 不动 Vika 自己的飞书/OV/模型配置，也不卸载 gh CLI。
+ * 还原 Vika 接线：把「一键配置 Vika」和「安装/登录 GitHub CLI」造成的改动全部清掉。
+ *
+ * 包含：命令解析器补丁、插件工具/桥配置/角色、config.json 角色、gh 登录态与 git 身份；
+ * 插件自己安装的 gh 程序也会卸载。Vika 自己的飞书/OV/模型配置保持不动。
  */
 export async function resetVikaContainer({ container, workspace, log = () => {} }) {
   if (!CONTAINER_NAME.test(String(container || ""))) throw new Error("容器名不合法");
@@ -357,6 +461,37 @@ export async function resetVikaContainer({ container, workspace, log = () => {} 
   if (String(inspect.stdout).trim() !== "true") throw new Error(`容器 ${container} 没有运行`);
   const steps = [];
 
+  // 1) 撤销 /dshin、/dshout、/dshnew 的命令解析器补丁。
+  const router = await revertRouterCommands(container);
+  if (router.reverted.length > 0) steps.push(`命令解析器补丁已撤销（${router.reverted.length} 个文件）`);
+  if (router.unmatched.length > 0) {
+    log("warn", `vika: 命令解析器里没有找到插件补丁：${router.unmatched.join(", ")}`);
+    steps.push(`警告：命令解析器里没有找到插件补丁（${router.unmatched.join(", ")}）`);
+  }
+
+  // 2) 撤销 GitHub CLI 安装/登录与 git 身份。
+  const github = await readGithubMarker(container);
+  await docker(["exec", container, "sh", "-lc", "pkill -f 'gh auth login' >/dev/null 2>&1 || true"]).catch(() => {});
+  const gitRestored = await restoreGitIdentity(container);
+  steps.push(gitRestored ? "容器 git 全局身份已按安装前备份还原" : "容器 git 全局身份里插件写入的值已清理");
+  await docker(["exec", container, "sh", "-lc", [
+    "rm -rf /root/.vika/tools/gh",
+    "if [ -L /root/.config/gh ]; then rm -f /root/.config/gh; fi",
+    "rm -f /root/.vika/.plugin-github.json /root/.vika/.plugin-git-identity-backup.json",
+  ].join("; ")]);
+  if (github.installedGh === true) {
+    try {
+      await docker(["exec", container, "sh", "-lc", "if command -v apt-get >/dev/null 2>&1; then apt-get remove -y gh; elif command -v apk >/dev/null 2>&1; then apk del github-cli; fi"], { timeout: 300000 });
+      steps.push("插件安装的 GitHub CLI 已卸载");
+    } catch (error) {
+      log("warn", `vika: 卸载 GitHub CLI 失败: ${String(error)}`);
+      steps.push(`GitHub CLI 卸载失败：${String(error)}`);
+    }
+  } else {
+    steps.push("GitHub CLI 登录态与 git 身份已清除（gh 程序保留）");
+  }
+
+  // 3) 还原 config.json 角色。
   const backup = `/root/.vika/config.json.bak.reset-${Date.now()}`;
   await docker(["exec", container, "sh", "-c", `cp ${shellQuote("/root/.vika/config.json")} ${shellQuote(backup)}`]);
   const configText = await readContainerFile(container, "/root/.vika/config.json");
@@ -370,7 +505,8 @@ export async function resetVikaContainer({ container, workspace, log = () => {} 
   }
   steps.push(`config.json 角色已恢复为内置 colleague（备份 ${backup}）`);
 
-  await docker(["exec", container, "sh", "-lc", "rm -f /root/.dsh-bridge.json /root/.vika/roles/vika.md /root/.vika/roles/dsh-worker.md /root/.vika/tools/dsh-bridge.mjs /root/.vika/tools/gh-work.mjs /root/.vika/tools/gh-inbox.mjs; rm -f /root/.vika/config.json.bak.plugin-*"]);
+  // 4) 删除插件工具、桥配置、角色文件与插件产生的 config 备份。
+  await docker(["exec", container, "sh", "-lc", "rm -f /root/.dsh-bridge.json /root/.vika/roles/vika.md /root/.vika/roles/dsh-worker.md /root/.vika/tools/dsh-bridge.mjs /root/.vika/tools/gh-work.mjs /root/.vika/tools/gh-inbox.mjs; rm -f /root/.vika/config.json.bak.plugin-*; rmdir /root/.vika/tools 2>/dev/null || true"]);
   steps.push("插件注入的工具、桥配置和角色文件已删除");
 
   try {
@@ -400,7 +536,6 @@ export async function resetVikaContainer({ container, workspace, log = () => {} 
   }
   return { container, steps, hostState };
 }
-
 /** 插件临时文件只放系统临时目录：不写项目目录，也不创建 AgentsDo。 */
 function pluginTmpDir() {
   return path.join(os.tmpdir(), "dsh-openviking-expand");

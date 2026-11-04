@@ -394,7 +394,7 @@ function VikaSettingsForm() {
   }
 
   async function resetVika() {
-    if (!window.confirm('将删除插件注入 Vika 的工具/桥配置/角色，并清空宿主 .vika 状态；Vika 的飞书/OV/模型配置和 gh 登录会保留。继续？')) return
+    if (!window.confirm('将撤销插件对 Vika 的全部改动：删除注入的工具/桥配置/角色、撤销 /dshin 命令解析补丁、清除 GitHub CLI 登录与 git 身份（插件装的 gh 也会卸载），并清空宿主 .vika 状态；Vika 的飞书/OV/模型配置保留。继续？')) return
     setStatus({ busy: true, error: '', ok: '' })
     try {
       var result = await ovxConnectRequest('/openviking-vika-config/reset', {

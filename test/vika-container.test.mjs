@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { applyRouterCommandAllowlist } from "../host/vika/container.mjs";
+import { applyRouterCommandAllowlist, removeRouterCommandAllowlist } from "../host/vika/container.mjs";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = target => fs.readFileSync(path.join(root, target), "utf8");
@@ -39,6 +39,33 @@ test("applyRouterCommandAllowlist：锚点不存在时返回 patched=false（不
   assert.equal(result.patched, false);
   assert.equal(result.text, "export function unrelated() {\n  return 1;\n}\n");
   assert.equal(applyRouterCommandAllowlist("").patched, false);
+});
+
+test("removeRouterCommandAllowlist：撤销补丁后源码回到原样", () => {
+  const patched = applyRouterCommandAllowlist(commandsSource);
+  const result = removeRouterCommandAllowlist(patched.text);
+  assert.equal(result.removed, true);
+  assert.doesNotMatch(result.text, /\["dshin"/);
+  assert.equal(result.text, commandsSource, "撤销后应与原始源码一致");
+
+  // 没有补丁时不误删、不报错。
+  const clean = removeRouterCommandAllowlist(commandsSource);
+  assert.equal(clean.removed, false);
+  assert.equal(clean.text, commandsSource);
+  assert.equal(removeRouterCommandAllowlist("").removed, false);
+});
+
+test("恢复 Vika 原始接线覆盖一键配置与 GitHub 登录的改动", () => {
+  const container = source("host/vika/container.mjs");
+  const start = container.indexOf("export async function resetVikaContainer");
+  assert.ok(start > 0, "缺少 resetVikaContainer");
+  const reset = container.slice(start);
+  assert.match(reset, /revertRouterCommands\(container\)/, "必须撤销 /dshin 命令解析补丁");
+  assert.match(reset, /restoreGitIdentity\(container\)/, "必须还原 git 身份");
+  assert.match(reset, /rm -rf \/root\/\.vika\/tools\/gh/, "必须删除 gh 登录态目录");
+  assert.match(reset, /apt-get remove -y gh/, "插件装的 gh 必须卸载");
+  assert.match(reset, /config\.json\.bak\.plugin-/, "必须清理插件产生的 config 备份");
+  assert.match(reset, /hostState/, "必须清空宿主 .vika 状态");
 });
 
 test("容器配置成功文案只在补丁命中时给出", () => {
