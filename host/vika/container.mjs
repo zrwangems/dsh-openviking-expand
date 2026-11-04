@@ -78,9 +78,23 @@ function samePath(a, b) {
   return normalizePath(a).toLowerCase() === normalizePath(b).toLowerCase();
 }
 
+/** Docker 查询类命令：短超时 + 一次重试，失败时给出可操作的提示（引擎/管道卡死时不再干等 2 分钟）。 */
+async function dockerQuery(args, what, timeout = 15000) {
+  let lastError;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      return await docker(args, { timeout });
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+  throw new Error(`Docker 引擎没有响应（${what} 超时或失败），请重启 Docker Desktop 后重试：${lastError instanceof Error ? lastError.message : String(lastError)}`);
+}
+
 /** 列出本机容器，供插件设置页选择。 */
 export async function listVikaContainers() {
-  const { stdout } = await docker(["ps", "-a", "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}"]);
+  const { stdout } = await dockerQuery(["ps", "-a", "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}"], "docker ps");
   return stdout.split(/\r?\n/).filter(Boolean).map(line => {
     const [name, image, status] = line.split("\t");
     return { name, image, status, running: /^Up\b/i.test(status || "") };
@@ -111,15 +125,15 @@ export async function resolveContainerWorkspace(container) {
 }
 
 async function containerMounts(container) {
-  const { stdout } = await docker(["inspect", "--format", "{{range .Mounts}}{{.Source}}|{{.Destination}}\n{{end}}", container]);
+  const { stdout } = await dockerQuery(["inspect", "--format", "{{range .Mounts}}{{.Source}}|{{.Destination}}\n{{end}}", container], "docker inspect");
   return stdout.split(/\r?\n/).filter(Boolean).map(line => {
     const index = line.indexOf("|");
     return { source: line.slice(0, index), destination: line.slice(index + 1) };
   });
 }
 
-async function readContainerFile(container, file) {
-  const { stdout } = await docker(["exec", container, "sh", "-c", `cat ${shellQuote(file)}`]);
+async function readContainerFile(container, file, { timeout = 120000 } = {}) {
+  const { stdout } = await docker(["exec", container, "sh", "-c", `cat ${shellQuote(file)}`], { timeout });
   return stdout;
 }
 
@@ -548,10 +562,8 @@ export async function resetVikaContainer({ container, workspace, log = () => {} 
   const config = JSON.parse(configText);
   if (Array.isArray(config.agents)) {
     config.agents = config.agents.map(agent => ({ ...agent, role: "colleague" }));
-    const tmp = path.join(pluginTmpDir(), `.vika-reset-config-${process.pid}-${Date.now()}.json`);
-    await writeFile(tmp, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-    await copyHostFile(container, tmp, "/root/.vika/config.json");
-    await rm(tmp, { force: true });
+    // 直接写容器：不依赖系统临时目录，避免临时目录不存在时恢复中断。
+    await writeContainerFile(container, "/root/.vika/config.json", `${JSON.stringify(config, null, 2)}\n`);
   }
   steps.push(`config.json 角色已恢复为内置 colleague（备份 ${backup}）`);
 
@@ -596,7 +608,7 @@ function pluginTmpDir() {
 export async function vikaDisplayName(container) {
   if (!CONTAINER_NAME.test(String(container || ""))) return "";
   try {
-    const text = await readContainerFile(container, "/root/.vika/config.json");
+    const text = await readContainerFile(container, "/root/.vika/config.json", { timeout: 15000 });
     const config = JSON.parse(text);
     const name = config?.agents?.[0]?.displayName;
     return typeof name === "string" ? name : "";

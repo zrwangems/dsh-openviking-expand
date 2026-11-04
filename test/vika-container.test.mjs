@@ -76,6 +76,23 @@ test("容器部署不依赖 docker cp，并带重试与引擎预检", () => {
   assert.match(container, /writeContainerFile\(container, containerFile, content\)/, "文本文件走 exec + stdin 写入");
 });
 
+test("恢复接线直接写容器 config.json，不依赖系统临时目录", () => {
+  const container = source("host/vika/container.mjs");
+  const start = container.indexOf("export async function resetVikaContainer");
+  const reset = container.slice(start);
+  assert.match(reset, /writeContainerFile\(container, "\/root\/\.vika\/config\.json"/, "恢复时直接写容器");
+  assert.doesNotMatch(reset, /\.vika-reset-config-/, "恢复流程不应再依赖临时文件");
+});
+
+test("容器列表查询 15 秒超时并重试，失败给出可操作提示", () => {
+  const container = source("host/vika/container.mjs");
+  assert.match(container, /async function dockerQuery/, "查询类 docker 命令要统一短超时");
+  assert.match(container, /timeout = 15000/, "默认超时 15 秒");
+  assert.match(container, /Docker 引擎没有响应/, "失败时提示重启 Docker Desktop");
+  assert.match(container, /listVikaContainers[\s\S]*?dockerQuery/, "容器列表走短超时查询");
+  assert.match(container, /containerMounts[\s\S]*?dockerQuery/, "挂载查询走短超时查询");
+});
+
 test("容器配置成功文案只在补丁命中时给出", () => {
   const container = source("host/vika/container.mjs");
   assert.match(container, /if \(allowlist\.patched\.length > 0\) \{[\s\S]*?steps\.push\(/);
