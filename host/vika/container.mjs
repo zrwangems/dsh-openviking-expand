@@ -23,7 +23,12 @@ const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 function docker(args, { timeout = 120000, input } = {}) {
   if (input === undefined) {
     return execFileAsync("docker", args, { timeout, windowsHide: true, maxBuffer: 16 * 1024 * 1024 })
-      .then(result => ({ stdout: result.stdout, stderr: result.stderr }));
+      .then(result => ({ stdout: result.stdout, stderr: result.stderr }))
+      .catch(error => {
+        const detail = String(error.stderr || error.stdout || "").trim();
+        const code = error.code === undefined ? "" : `（${error.code}）`;
+        throw new Error(`docker ${args.join(" ")} 失败${code}: ${detail.slice(0, 800) || error.message}`);
+      });
   }
   return new Promise((resolve, reject) => {
     const child = spawn("docker", args, { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
@@ -99,8 +104,22 @@ async function writeContainerFile(container, file, content) {
   await docker(["exec", "-i", container, "sh", "-c", `cat > ${shellQuote(file)}`], { input: content });
 }
 
+/** Docker 偶发失败（引擎忙、管道抖动）时重试几次，保留最后一次真实错误。 */
+async function withDockerRetry(action, attempts = 3, delayMs = 800) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try { return await action() } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
+}
+
+/** 把宿主文本文件写进容器：走 docker exec + stdin，比 docker cp 更能容忍引擎抖动。 */
 async function copyHostFile(container, hostFile, containerFile) {
-  await docker(["cp", hostFile, `${container}:${containerFile}`]);
+  const content = await readFile(hostFile, "utf8");
+  await withDockerRetry(() => writeContainerFile(container, containerFile, content));
 }
 
 /**
@@ -199,6 +218,11 @@ export async function configureVikaContainer({ container, settings, pluginRoot, 
   const inspect = await docker(["inspect", "--format", "{{.State.Running}}", container]);
   if (String(inspect.stdout).trim() !== "true") throw new Error(`容器 ${container} 没有运行`);
 
+  try {
+    await docker(["version", "--format", "{{.Server.Version}}"], { timeout: 15000 });
+  } catch (error) {
+    throw new Error("Docker 引擎没有响应，请重启 Docker Desktop 后重试：" + (error instanceof Error ? error.message : String(error)));
+  }
   const mounts = await containerMounts(container);
   const workspaceMount = mounts.find(item => item.destination === "/workspace");
   if (workspaceMount === undefined) throw new Error(`容器 ${container} 没有 /workspace 挂载；请用 -v <vika目录>:/workspace 启动`);
@@ -206,7 +230,7 @@ export async function configureVikaContainer({ container, settings, pluginRoot, 
   steps.push(`容器运行中，/workspace = ${workspace}`);
 
   // 工具直接进容器，不碰宿主工作区。
-  await docker(["exec", container, "sh", "-c", "mkdir -p /root/.vika/tools"]);
+  await withDockerRetry(() => docker(["exec", container, "sh", "-c", "mkdir -p /root/.vika/tools && test -d /root/.vika/tools"]));
   const toolsDir = path.join(pluginRoot, "vika", "tools");
   for (const name of readdirSync(toolsDir)) {
     if (!name.endsWith(".mjs")) continue;

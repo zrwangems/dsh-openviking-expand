@@ -68,6 +68,14 @@ test("恢复 Vika 原始接线覆盖一键配置与 GitHub 登录的改动", () 
   assert.match(reset, /hostState/, "必须清空宿主 .vika 状态");
 });
 
+test("容器部署不依赖 docker cp，并带重试与引擎预检", () => {
+  const container = source("host/vika/container.mjs");
+  assert.doesNotMatch(container, /docker\(\["cp"/, "不应再调用 docker cp（引擎抖动时容易失败）");
+  assert.match(container, /withDockerRetry/, "文件写入/建目录要带重试");
+  assert.match(container, /Docker 引擎没有响应/, "引擎无响应时要给出可操作提示");
+  assert.match(container, /writeContainerFile\(container, containerFile, content\)/, "文本文件走 exec + stdin 写入");
+});
+
 test("容器配置成功文案只在补丁命中时给出", () => {
   const container = source("host/vika/container.mjs");
   assert.match(container, /if \(allowlist\.patched\.length > 0\) \{[\s\S]*?steps\.push\(/);
