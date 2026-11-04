@@ -51,6 +51,8 @@ Vika 是 Router，DSH 的每个物理会话是 Worker：
 - 一键恢复：删除插件注入内容，恢复 Vika 原始角色；
 - GitHub CLI 安装/登录入口；GitHub 凭据只留在 Vika 容器。
 
+**vika 组件默认关闭**：安装后只启用 console / sidebar，不会启动桥和 vika 运行时；需要时在插件页把 `vika` 行打开。
+
 Vika 本体、OpenViking 服务、飞书机器人都需要用户自己部署；插件不安装、不删除容器。
 
 ## 环境要求
@@ -83,7 +85,7 @@ node scripts/build-client.mjs
 dsh plugin --profile web add .
 ```
 
-安装后在插件列表确认「OpenViking 扩展」已启用，硬刷新浏览器。
+安装后在插件列表确认「OpenViking 扩展」已启用，硬刷新浏览器。`vika` 组件默认关闭，需要时在插件页单独打开。
 
 ## 配置
 

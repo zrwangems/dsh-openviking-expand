@@ -53,6 +53,8 @@ test("package.json 与 cordis.patch.yml、entry 导出一致", () => {
   assert.match(patch, /name: 'dsh-openviking-expand\/vika'/);
   assert.match(patch, /id: openviking-expand-shell/);
   assert.match(patch, /name: 'dsh-openviking-expand'\s*$/m);
+  // vika 组件默认关闭：装好后只跑 console/sidebar，需要时在插件页手动打开。
+  assert.match(patch, /id: openviking-expand-vika[\s\S]*?disabled: true/);
   // 三个组件的显示名来自各自的 locale 资源（console / sidebar / vika），不带图标。
   for (const [dir, title] of [["locale/console", "console"], ["locale/sidebar", "sidebar"], ["locale/vika", "vika"]]) {
     const locale = JSON.parse(readFileSync(join(root, dir, "en.json"), "utf8"));
