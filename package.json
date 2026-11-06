@@ -1,6 +1,6 @@
 {
   "name": "dsh-openviking-expand",
-  "version": "0.2.8",
+  "version": "0.3.0",
   "description": "OpenViking bundle for DeepSeek Harness: the Studio console in the left sidebar and a viking:// tree in the right sidebar",
   "license": "AGPL-3.0-only",
   "author": "zrwangems",
