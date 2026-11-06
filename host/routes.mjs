@@ -21,7 +21,7 @@ import {
 } from "./console.mjs";
 import { OvError, createOvClient, httpStatusOf } from "./connection.mjs";
 import { listDirectory, openItem } from "./viking-fs.mjs";
-import { readSettings, saveSettings, saveVikaSettings, publicSettings } from "./settings.mjs";
+import { readSettings, saveSettings, publicSettings } from "./settings.mjs";
 
 /** 插件自己的路由前缀（DSH 同源）。 */
 export const ROUTE_PREFIX = "/openviking-expand";
@@ -337,23 +337,6 @@ async function handleSaveSettings(req, res, config = {}) {
   sendJson(res, 200, { ok: true, result: { settings: publicSettings(saved), apiKey: effectiveKey, adminKey: effectiveAdmin } });
 }
 
-/** 保存 vika 页设置：容器名与桥 host/port。 */
-async function handleSaveVikaSettings(req, res) {
-  let body;
-  try {
-    body = await readJsonRequest(req);
-  } catch (error) {
-    sendJson(res, 400, { ok: false, error: { code: "bad-request", message: String(error?.message || error) } });
-    return;
-  }
-  const saved = await saveVikaSettings({
-    containerName: body.containerName,
-    bridgeHost: body.bridgeHost,
-    bridgePort: body.bridgePort,
-  });
-  sendJson(res, 200, { ok: true, result: { settings: publicSettings(saved) } });
-}
-
 /**
  * 一次请求的实际处理（返回 Promise，便于单测直接 await，不必起 HTTP 服务）。
  */
@@ -377,10 +360,6 @@ export async function handleRouteRequest({ handlers, consoleRoute, fence, compon
   }
   if (path === "/settings" && req.method === "POST") {
     await handleSaveSettings(req, res, config);
-    return;
-  }
-  if (path === "/settings/vika" && req.method === "POST") {
-    await handleSaveVikaSettings(req, res);
     return;
   }
   if (req.method !== "GET") {

@@ -22,8 +22,6 @@ const FRAGMENTS = [
   "item.mjs",
   "console.mjs",
   "connect.mjs",
-  "vika/runtime-client.mjs",
-  "vika/runtime.mjs",
   "entry.mjs",
 ];
 
@@ -47,27 +45,6 @@ const footer = `    exports.inject = ovxPlugin.inject
   },
 })
 `;
-
-// 把 vendored vika runtime 的客户端包转成一个工厂片段，供我们的信封加载。
-// 它的 client.js 是独立的 ModuleLoader 信封；提取 factory 主体后在本插件工厂里调用。
-const runtimeClientPath = join(root, "vika", "runtime", "client.js");
-const runtimeClientText = readFileSync(runtimeClientPath, "utf8");
-const factoryMarker = "factory: (require) => {";
-const factoryStart = runtimeClientText.indexOf(factoryMarker);
-if (factoryStart < 0) throw new Error("vika/runtime/client.js 缺少 factory");
-const bodyStart = runtimeClientText.indexOf("\n", factoryStart) + 1;
-const bodyEnd = runtimeClientText.lastIndexOf("\n\t}\n});");
-if (bodyEnd < 0) throw new Error("vika/runtime/client.js 找不到 factory 结尾");
-const runtimeBody = runtimeClientText.slice(bodyStart, bodyEnd).trimEnd();
-const runtimeFragment = `/**
- * vika runtime 面板客户端（生成文件，勿手改）。
- * 源：vika/runtime/client.js；由 scripts/build-client.mjs 提取 factory 主体。
- */
-var runtimeClientFactory = function (require) {
-${runtimeBody}
-}
-`;
-writeFileSync(join(root, "client", "vika", "runtime-client.mjs"), runtimeFragment, "utf8");
 
 const body = FRAGMENTS.map(name => {
   const text = readFileSync(join(root, "client", name), "utf8");

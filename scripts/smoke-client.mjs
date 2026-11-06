@@ -258,8 +258,7 @@ function reply(result) {
 }
 
 function fakeFetch(url) {
-  if (url.includes("/openviking-expand/settings")) return reply({ configured: true, serviceType: "open", server: "http://ov.test", vika: { workspace: "D:/work" } });
-  if (url.includes("/orchestrator/api/state")) return reply({ setup: { machine: { stateDir: "D:/state" }, problem: null, accounts: {} }, load: { running: 0, queued: 0, maxWorkers: 3 }, masterId: "m", paused: false, health: {} });
+  if (url.includes("/openviking-expand/settings")) return reply({ configured: true, serviceType: "open", server: "http://ov.test" });
   if (url.includes("/openviking-expand/bootstrap")) {
     return reply({ components: { console: true, sidebar: true }, endpoint: "http://ov.test", root: "viking://", showHidden: false, nodeLimit: 1000 });
   }
@@ -297,22 +296,6 @@ function fakeFetch(url) {
       childrenHasMore: false,
     });
   }
-  if (url.includes("/openviking-vika/state")) {
-    return reply({
-      overview: { person: [], problems: [], flow: { received: 0, filtered: 0, judged: 0, accepted: 0 }, executor: { running: 0, maxWorkers: 3, queued: 0, idle: 0, paused: false } },
-      settings: { blocks: {}, history: [], deployment: {} },
-      repos: [], workers: [], tickets: [], threads: [], assignments: [], triggers: [], decisions: [], issues: {},
-    });
-  }
-  if (url.includes("/openviking-vika/overview")) {
-    return reply({ person: [], problems: [], flow: { received: 0, filtered: 0, judged: 0, accepted: 0 }, executor: { running: 0, maxWorkers: 3, queued: 0, idle: 0, paused: false }, tickets: { open: 0, working: 0, blocked: 0, ended: 0 } });
-  }
-  if (url.includes("/openviking-vika/sources")) return reply({ sources: [], repos: [] });
-  if (url.includes("/openviking-vika/threads")) return reply({ items: [] });
-  if (url.includes("/openviking-vika/tickets")) return reply({ items: [], total: 0 });
-  if (url.includes("/openviking-vika/decisions")) return reply({ items: [], total: 0 });
-  if (url.includes("/openviking-vika/settings")) return reply({ blocks: { policy: { revision: 0, value: { sources: {}, repos: { allow: [], deny: [] }, rules: [] } }, eval: { revision: 0, value: { mode: "observe" } }, executor: { revision: 0, value: { maxWorkers: 3, paused: false, speculative: false } }, channels: { revision: 0, value: { feishu: true, github: true, bridge: true, subscribe: true } }, prompts: { revision: 0, value: { workerHeader: "" } } }, history: [], deployment: {} });
-  if (url.includes("/openviking-vika/search")) return reply({ tickets: [], threads: [], items: [] });
   return Promise.resolve({ ok: false, status: 404, text: async () => JSON.stringify({ ok: false, error: { code: "not-found", message: "unexpected" } }) });
 }
 
@@ -379,19 +362,18 @@ const itemDescriptor = runtime.state.registeredTabs.find(tab => tab.id === "open
 report.push(`页签标题             ${browseDescriptor.title()} / ${itemDescriptor.title()}`);
 report.push(`item hidden/dedupe   ${String(itemDescriptor.hidden)} / ${String(typeof itemDescriptor.dedupeKey)}`);
 report.push(`console 槽位          ${JSON.stringify(runtime.state.registeredSlots.map(slot => slot.name))}`);
-const mainSlot = runtime.state.registeredSlots.find(slot => slot.name === "main" && slot.key === "vika");
-const vikaSidebar = runtime.state.registeredSlots.find(slot => slot.name === "sidebar.panellist" && slot.id === "vika");
-report.push(`vika 面板槽位         ${String(mainSlot !== undefined)} / ${String(vikaSidebar !== undefined)}`);
-if (mainSlot === undefined) throw new Error("缺 vika main 槽位");
-if (vikaSidebar === undefined) throw new Error("缺 vika 侧栏入口");
+const mainSlot = runtime.state.registeredSlots.find(slot => slot.name === "main" && slot.key === "openviking-console");
+const consoleSidebar = runtime.state.registeredSlots.find(slot => slot.name === "sidebar.panellist" && slot.id === "openviking-console");
+report.push(`console 面板槽位       ${String(mainSlot !== undefined)} / ${String(consoleSidebar !== undefined)}`);
+if (mainSlot === undefined) throw new Error("缺 console main 槽位");
+if (consoleSidebar === undefined) throw new Error("缺 console 侧栏入口");
 
-const scope = { sessionId: "session-test", cwd: "D:\\repo" };
 
-/* 树页签在真实 DSH 浏览器里验收；离线 smoke 只覆盖信封、组件注册与 vika 面板。 */
+/* 树页签在真实 DSH 浏览器里验收；离线 smoke 只覆盖信封、组件注册与页签。 */
 
 const requestPaths = [...new Set(runtime.state.fetchCalls.map(call => new URL(call.url, "http://x").pathname))];
 report.push(`请求路径             ${JSON.stringify(requestPaths)}`);
 if (requestPaths.some(path => path.indexOf("/api/v1/") >= 0)) throw new Error("浏览器半侧直连了 OpenViking API");
 
 process.stdout.write(`${report.map(line => `  ${line}`).join("\n")}\n`);
-process.stdout.write("客户端冒烟通过：信封 / 三组件注册 / vika 面板槽位\n");
+process.stdout.write("客户端冒烟通过：信封 / 双组件注册 / 页签\n");

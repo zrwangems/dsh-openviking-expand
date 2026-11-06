@@ -1,7 +1,7 @@
 {
   "name": "dsh-openviking-expand",
   "version": "0.2.8",
-  "description": "OpenViking bundle for DeepSeek Harness: Studio console, viking:// sidebar, and a vendored vika panel where Vika is the router and DSH sessions are workers",
+  "description": "OpenViking bundle for DeepSeek Harness: the Studio console in the left sidebar and a viking:// tree in the right sidebar",
   "license": "AGPL-3.0-only",
   "author": "zrwangems",
   "repository": {
@@ -19,14 +19,12 @@
     "console",
     "sidebar",
     "better-sidebar",
-    "vika",
-    "agent",
-    "bridge",
     "plugin",
     "bundle"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "dsh": ">=0.2.2-rc.1 <0.3.0"
   },
   "type": "module",
   "main": "host/index.mjs",
@@ -47,30 +45,23 @@
     "./icon": "./icons/openviking-expand.png",
     "./console": "./host/components/console/index.mjs",
     "./sidebar": "./host/components/sidebar/index.mjs",
-    "./vika": "./host/components/vika/index.mjs",
     "./console/locale/*.json": "./locale/console/*.json",
     "./console/icon": "./icons/console.png",
     "./sidebar/locale/*.json": "./locale/sidebar/*.json",
-    "./vika/locale/*.json": "./locale/vika/*.json",
-    "./sidebar/icon": "./icons/sidebar.png",
-    "./vika/icon": "./icons/vika.png"
+    "./sidebar/icon": "./icons/sidebar.png"
   },
   "files": [
     "host/",
     "client/",
     "lib/",
-    "vika/",
     "scripts/",
     "locale/",
     "cordis.patch.yml",
     "README.md",
+    "detail.md",
     "LICENSE",
     "icons/"
   ],
-  "dependencies": {
-    "proper-lockfile": "4.1.2",
-    "zod": "4.4.3"
-  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

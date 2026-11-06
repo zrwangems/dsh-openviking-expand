@@ -213,7 +213,6 @@ function ovxApplyConnect(ctx) {
   register('plugins.bundle.config', 'dsh-openviking-expand')
   register('plugins.row.config', 'dsh-openviking-expand#openviking-expand-console')
   register('plugins.row.config', 'dsh-openviking-expand#openviking-expand-sidebar')
-  register('plugins.row.config', 'dsh-openviking-expand#openviking-expand-vika')
 }
 
 var connectPart = { inject: ['slots'], apply: ovxApplyConnect }

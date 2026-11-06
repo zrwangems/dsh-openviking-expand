@@ -4,8 +4,6 @@
  * 本插件不引入 schemastery（保持零运行时依赖），所有缺省值、上下限、
  * 类型纠正都集中在这里，其它模块只读解析结果。
  */
-import { resolveVikaConfig } from "./vika/config.mjs";
-
 /** OpenViking 服务的默认地址。 */
 export const DEFAULT_ENDPOINT = "http://127.0.0.1:1933";
 
@@ -41,8 +39,6 @@ export function resolveConfig(input = {}) {
       maxFileBytes: clampInt(sidebarInput.maxFileBytes, 1024, MAX_FILE_BYTES_CEILING, 1024 * 1024),
       timeoutMs: clampInt(sidebarInput.timeoutMs, 1000, 120000, 15000),
     },
-    // 第三个组件：把 Vika 的请求变成 DSH 会话（默认关闭，避免无谓开端口）。
-    vika: resolveVikaConfig(raw.vika, { endpoint }),
   };
 }
 

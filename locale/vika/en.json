@@ -1,6 +1,0 @@
-{
-  "meta": {
-    "title": "vika",
-    "description": "Vika-as-router Vika panel (vendored Windows-adapted vika) and local loopback bridge; each worker is a real DSH session."
-  }
-}
