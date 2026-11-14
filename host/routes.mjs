@@ -21,7 +21,6 @@ import {
 } from "./console.mjs";
 import { OvError, createOvClient, httpStatusOf } from "./connection.mjs";
 import { listDirectory, openItem } from "./viking-fs.mjs";
-import { readSettings, saveSettings, publicSettings } from "./settings.mjs";
 
 /** 插件自己的路由前缀（DSH 同源）。 */
 export const ROUTE_PREFIX = "/openviking-expand";
@@ -79,26 +78,28 @@ export function connectionOf(req, url) {
  * 才回退到插件配置 / 环境变量 / ~/.openviking/ovcli.conf —— 本机凭据不能
  * 顺手发给另一个服务地址。
  */
-export function createConnectionPool(config, { fetchImpl } = {}) {
+export function createConnectionPool(config, { fetchImpl, credentialFile } = {}) {
   const cache = new Map();
   return function clientFor(connection = {}) {
     const endpoint = connection.server || config.endpoint;
     const isConfigured = endpoint === config.endpoint;
     const providedKey = String(connection.key || "").trim();
     const apiKey = providedKey || (isConfigured ? config.apiKey : "");
-    const accountId = apiKey === "" ? String(connection.account || "").trim() : "";
-    const userId = apiKey === "" ? String(connection.user || "").trim() : "";
+    const accountId = apiKey === "" ? String(connection.account || (isConfigured ? config.accountId : "") || "").trim() : "";
+    const userId = apiKey === "" ? String(connection.user || (isConfigured ? config.userId : "") || "").trim() : "";
     const id = [endpoint, apiKey, accountId, userId].join("\u0000");
     let client = cache.get(id);
     if (client === undefined) {
       client = createOvClient({
         endpoint,
         apiKey,
+        adminApiKey: isConfigured ? config.adminKey : "",
         accountId,
         userId,
         timeoutMs: config.sidebar.timeoutMs,
         allowCredentialFallback: isConfigured,
         ...(fetchImpl === undefined ? {} : { fetchImpl }),
+        ...(credentialFile === undefined ? {} : { credentialFile }),
       });
       if (cache.size >= CONNECTION_CACHE_LIMIT) cache.delete(cache.keys().next().value);
       cache.set(id, client);
@@ -114,30 +115,15 @@ export function createConnectionPool(config, { fetchImpl } = {}) {
 export function createRouteHandlers({ config, pool }) {
   return {
     "/bootstrap": async () => {
-      // 已保存的连接设置优先；没有就用插件配置端点 + 本机凭据回退。
-      const saved = await readSettings();
-      const savedOv = saved.openviking || {};
-      const savedServer = normalizeServer(savedOv.server);
-      const configured = normalizeServer(config.endpoint);
-      const endpoint = savedServer || configured || "";
-      let apiKey = typeof savedOv.apiKey === "string" && savedOv.apiKey !== "" ? savedOv.apiKey : "";
-      let adminKey = typeof savedOv.adminKey === "string" ? savedOv.adminKey : "";
-      const sameConfigured = configured !== null && (savedServer === null || savedServer === configured);
-      if (apiKey === "" && sameConfigured) {
-        try {
-          const client = pool({});
-          if (client !== undefined && client !== null && typeof client.getApiKey === "function") {
-            apiKey = await client.getApiKey();
-          }
-        } catch {
-          /* 拿不到本机凭据就不暴露 */
-        }
-      }
-      if (adminKey === "" && sameConfigured) {
-        try {
-          const client = pool({});
-          if (client !== undefined && client !== null && typeof client.getAdminKey === "function") adminKey = await client.getAdminKey();
-        } catch { /* 拿不到 root key */ }
+      const endpoint = normalizeServer(config.endpoint) || "";
+      let apiKey = "";
+      let adminKey = "";
+      try {
+        const client = pool({});
+        if (typeof client?.getApiKey === "function") apiKey = await client.getApiKey();
+        if (typeof client?.getAdminKey === "function") adminKey = await client.getAdminKey();
+      } catch {
+        /* 本机开发模式可以没有 Key，仍照常打开控制台。 */
       }
       return {
         components: {
@@ -145,7 +131,7 @@ export function createRouteHandlers({ config, pool }) {
           sidebar: config.sidebar.enabled,
         },
         endpoint,
-        serviceType: savedOv.serviceType === "volc" ? "volc" : "open",
+        configSource: config.configSource,
         ...(apiKey === "" ? {} : { apiKey }),
         ...(adminKey === "" ? {} : { adminKey }),
         root: config.sidebar.root,
@@ -153,7 +139,6 @@ export function createRouteHandlers({ config, pool }) {
         nodeLimit: config.sidebar.nodeLimit,
       };
     },
-    "/settings": async () => publicSettings(await readSettings()),
     "/ls": async (params, connection) => {
       const uri = params.get("uri") || config.sidebar.root;
       const showHidden = params.get("showHidden") === "true" || config.sidebar.showHidden;
@@ -205,138 +190,6 @@ function defaultComponents(config) {
   };
 }
 
-/** 读取并解析 JSON 请求体（限制大小，避免误发大文件）。 */
-async function readJsonRequest(req, limit = 16 * 1024) {
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > limit) throw new Error("请求体过大");
-    chunks.push(chunk);
-  }
-  const text = Buffer.concat(chunks).toString("utf8");
-  if (text.trim() === "") return {};
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error("请求体不是合法 JSON");
-  }
-}
-
-/**
- * 校验一个 OpenViking 连接：用给定地址与凭据调 /health。
- * 只做连通性/鉴权探测，不保存任何配置（配置由浏览器半侧保存）。
- */
-async function handleVerify(req, res, config = {}) {
-  let body;
-  try {
-    body = await readJsonRequest(req);
-  } catch (error) {
-    sendJson(res, 400, { ok: false, error: { code: "bad-request", message: String(error?.message || error) } });
-    return;
-  }
-  const server = normalizeServer(body.server);
-  if (server === null) {
-    sendJson(res, 400, { ok: false, error: { code: "bad-request", message: "服务地址必须是合法的 http(s) 地址" } });
-    return;
-  }
-  const saved = await readSettings();
-  const savedOv = saved.openviking || {};
-  const savedServer = normalizeServer(savedOv.server);
-  const sameServer = savedServer !== null && savedServer === server;
-  const savedKey = sameServer && typeof savedOv.apiKey === "string" ? savedOv.apiKey : "";
-  const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
-  const adminKey = typeof body.adminKey === "string" ? body.adminKey.trim() : "";
-  const account = typeof body.account === "string" ? body.account.trim() : "";
-  const user = typeof body.user === "string" ? body.user.trim() : "";
-  const key = apiKey || adminKey || savedKey;
-  // 只对「插件配置的端点」或「已保存的连接」允许回退本机凭据。
-  const allowFallback = normalizeServer(config.endpoint) === server || sameServer;
-  try {
-    const client = createOvClient({
-      endpoint: server,
-      apiKey: key,
-      accountId: key ? "" : account,
-      userId: key ? "" : user,
-      allowCredentialFallback: allowFallback,
-      timeoutMs: 8000,
-    });
-    const health = await client.healthResult();
-    let resolvedKey = key;
-    if (resolvedKey === "" && allowFallback && typeof client.getApiKey === "function") {
-      try { resolvedKey = await client.getApiKey(); } catch { /* 没有本机凭据 */ }
-    }
-    let resolvedAdmin = typeof savedOv.adminKey === "string" ? savedOv.adminKey : "";
-    if (resolvedAdmin === "" && allowFallback && typeof client.getAdminKey === "function") {
-      try { resolvedAdmin = await client.getAdminKey(); } catch { /* 无 root key */ }
-    }
-    sendJson(res, 200, { ok: true, result: { server, health, apiKey: resolvedKey, adminKey: resolvedAdmin } });
-  } catch (error) {
-    sendJson(res, httpStatusOf(error), {
-      ok: false,
-      error: {
-        code: typeof error?.code === "string" ? error.code : "internal",
-        message: error instanceof Error ? error.message : String(error),
-      },
-    });
-  }
-}
-
-/** 火山托管的固定服务地址。 */
-const VOLC_SERVER = "https://api.vikingdb.cn-beijing.volces.com/openviking";
-
-/**
- * 保存连接设置：地址/服务类型/语言/账号/用户与可选密钥。
- * 密钥留空表示沿用已保存值；返回公开摘要和实际生效的 Key（供浏览器种子 Studio）。
- */
-async function handleSaveSettings(req, res, config = {}) {
-  let body;
-  try {
-    body = await readJsonRequest(req);
-  } catch (error) {
-    sendJson(res, 400, { ok: false, error: { code: "bad-request", message: String(error?.message || error) } });
-    return;
-  }
-  const serviceType = body.serviceType === "volc" ? "volc" : "open";
-  const server = serviceType === "volc" ? VOLC_SERVER : normalizeServer(body.server);
-  if (server === null || server === "") {
-    sendJson(res, 400, { ok: false, error: { code: "bad-request", message: "服务地址必须是合法的 http(s) 地址" } });
-    return;
-  }
-  const language = body.language === "en" ? "en" : "zh";
-  const account = typeof body.account === "string" && body.account.trim() !== "" ? body.account.trim() : "default";
-  const user = typeof body.user === "string" && body.user.trim() !== "" ? body.user.trim() : "default";
-  const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
-  const adminKey = typeof body.adminKey === "string" ? body.adminKey.trim() : "";
-  const saved = await saveSettings({ serviceType, server, language, account, user, apiKey, adminKey });
-  const savedOv = saved.openviking || {};
-  if (serviceType === "volc" && (typeof savedOv.apiKey !== "string" || savedOv.apiKey === "")) {
-    sendJson(res, 400, { ok: false, error: { code: "bad-request", message: "火山托管需要填写用户 API 密钥" } });
-    return;
-  }
-  let effectiveKey = typeof savedOv.apiKey === "string" ? savedOv.apiKey : "";
-  if (effectiveKey === "") {
-    try {
-      const client = createOvClient({
-        endpoint: server,
-        allowCredentialFallback: normalizeServer(config.endpoint) === server,
-        timeoutMs: 8000,
-      });
-      if (typeof client.getApiKey === "function") effectiveKey = await client.getApiKey();
-    } catch {
-      /* 没有本机凭据就留空 */
-    }
-  }
-  let effectiveAdmin = typeof savedOv.adminKey === "string" ? savedOv.adminKey : "";
-  if (effectiveAdmin === "") {
-    try {
-      const client = createOvClient({ endpoint: server, allowCredentialFallback: normalizeServer(config.endpoint) === server, timeoutMs: 8000 });
-      if (typeof client.getAdminKey === "function") effectiveAdmin = await client.getAdminKey();
-    } catch { /* 无 root key */ }
-  }
-  sendJson(res, 200, { ok: true, result: { settings: publicSettings(saved), apiKey: effectiveKey, adminKey: effectiveAdmin } });
-}
-
 /**
  * 一次请求的实际处理（返回 Promise，便于单测直接 await，不必起 HTTP 服务）。
  */
@@ -353,15 +206,6 @@ export async function handleRouteRequest({ handlers, consoleRoute, fence, compon
   }
   const url = new URL(req.url || "/", "http://dsh.internal");
   const path = url.pathname.slice(ROUTE_PREFIX.length) || "/";
-  // 连接校验与设置保存是仅有的 POST 路由（插件页配置用）。
-  if (path === "/verify" && req.method === "POST") {
-    await handleVerify(req, res, config);
-    return;
-  }
-  if (path === "/settings" && req.method === "POST") {
-    await handleSaveSettings(req, res, config);
-    return;
-  }
   if (req.method !== "GET") {
     sendJson(res, 405, { ok: false, error: { code: "method-not-allowed", message: "GET only" } });
     return;

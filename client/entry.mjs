@@ -7,7 +7,6 @@
  * 右侧栏是软依赖：没装 dsh-better-sidebar 时只跳过页签，控制台照常工作。
  */
 
-var OVX_CONFIGURED = false
 var OVX_LOCALE_NS = 'openvikingSidebar'
 var ovxSidebarService = null
 var ovxTranslate = function (key) { return key }
@@ -176,24 +175,16 @@ function ovxApplySidebar(ctx) {
 }
 
 function ovxApply(ctx) {
-  // 插件页里的 OpenViking 连接配置（bundle/row config 插槽），与组件开关无关。
-  connectPart.apply(ctx)
-  // 壳层只装配：哪些界面组件启用由宿主 bootstrap 决定；同时读插件设置判断是否已配置。
-  Promise.all([ovxRequest('/bootstrap', null), ovxRequest('/settings', null)]).then(function (results) {
-    var payload = results[0]
-    var settings = results[1] || {}
-    OVX_CONFIGURED = settings.configured === true
+  // 连接由 Host 从本机 OV 配置解析，插件页不再注册设置表单。
+  ovxRequest('/bootstrap', null).then(function (payload) {
     var components = payload !== null && payload !== undefined && payload.components !== undefined && payload.components !== null
       ? payload.components
       : {}
-    // 已配置才写 Studio 连接种子；未配置时控制台/侧边栏显示去插件页配置的提示。
-    if (OVX_CONFIGURED) {
-      ovxSeedStudioConnection(
-        payload !== null && payload !== undefined ? payload.endpoint : undefined,
-        payload !== null && payload !== undefined ? payload.apiKey : undefined,
-        payload !== null && payload !== undefined ? payload.adminKey : undefined,
-      )
-    }
+    ovxSeedStudioConnection(
+      payload !== null && payload !== undefined ? payload.endpoint : undefined,
+      payload !== null && payload !== undefined ? payload.apiKey : undefined,
+      payload !== null && payload !== undefined ? payload.adminKey : undefined,
+    )
     if (components.console !== false) consolePart.apply(ctx)
     if (components.sidebar !== false) ovxApplySidebar(ctx)
   }, function () {

@@ -258,7 +258,6 @@ function reply(result) {
 }
 
 function fakeFetch(url) {
-  if (url.includes("/openviking-expand/settings")) return reply({ configured: true, serviceType: "open", server: "http://ov.test" });
   if (url.includes("/openviking-expand/bootstrap")) {
     return reply({ components: { console: true, sidebar: true }, endpoint: "http://ov.test", root: "viking://", showHidden: false, nodeLimit: 1000 });
   }
@@ -345,7 +344,7 @@ const plugin = envelope.factory(name => {
   throw new Error(`未预期的 require：${name}`);
 });
 plugin.apply(runtime.ctx);
-// 客户端入口先读 /bootstrap 与 /settings，再挂载各组件；等一轮微任务/定时器。
+// 客户端入口先读 /bootstrap，再挂载各组件；等一轮微任务/定时器。
 await new Promise(resolve => setTimeout(resolve, 50));
 
 const report = [];

@@ -80,6 +80,32 @@ test("别的服务地址没给 key 时不会把本机凭据带过去", async () 
   assert.equal(calls[1].headers["x-openviking-user"], "usr");
 });
 
+test("本机 trusted 模式自动使用 ovcli.conf 的 account/user", async () => {
+  const config = resolveConfig({ endpoint: "http://ov.test" }, {
+    env: {},
+    local: { accountId: "local-acc", userId: "local-user" },
+    legacy: {},
+  });
+  const calls = [];
+  const pool = createConnectionPool(config, {
+    credentialFile: "/nonexistent/ovcli.conf",
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), headers: init.headers });
+      return { ok: true, status: 200, text: async () => JSON.stringify({ status: "ok", result: [] }) };
+    },
+  });
+  const previous = process.env.OPENVIKING_API_KEY;
+  delete process.env.OPENVIKING_API_KEY;
+  try {
+    await pool({}).ls("viking://");
+    assert.equal(calls[0].headers["x-openviking-account"], "local-acc");
+    assert.equal(calls[0].headers["x-openviking-user"], "local-user");
+  } finally {
+    if (previous === undefined) delete process.env.OPENVIKING_API_KEY;
+    else process.env.OPENVIKING_API_KEY = previous;
+  }
+});
+
 test("同一连接复用客户端实例", () => {
   const config = makeConfig();
   const { pool } = captureClient(config);

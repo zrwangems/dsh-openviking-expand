@@ -109,26 +109,9 @@ function ovxUseAsync(loader, deps) {
   return [state, setState, run]
 }
 
-/** 未保存插件设置时挡住控制台/侧边栏内容；保存后自动放行（2 秒轮询）。 */
+/** 保留组件边界名称，连接检查交给各页面的健康状态显示。 */
 function OvxConfigGate(props) {
-  var pair = ovxUseAsync(function () { return ovxRequest('/settings', null) }, [])
-  var state = pair[0]
-  var run = pair[2]
-  var configured = state.value !== null && state.value !== undefined && state.value.configured === true
-  React.useEffect(function () {
-    var onSaved = function () { run() }
-    try { window.addEventListener('ovx-config-saved', onSaved) } catch (error) { /* SSR 或测试环境 */ }
-    var handle = configured ? null : setInterval(run, 2000)
-    return function () {
-      try { window.removeEventListener('ovx-config-saved', onSaved) } catch (error) { /* 忽略 */ }
-      if (handle !== null) clearInterval(handle)
-    }
-  }, [configured, run])
-  if (configured) return props.children
-  return h('div', { style: { padding: '24px' } },
-    h('div', { style: { fontSize: '15px', fontWeight: 600, marginBottom: '8px' } }, 'OpenViking 尚未配置'),
-    h('div', { style: { fontSize: '13px', color: 'var(--dsw-alias-label-secondary, #888)', lineHeight: '22px' } },
-      '请先到插件页配置 OpenViking 连接：左侧「插件」→「OpenViking 扩展」→「OpenViking 连接」，填写服务类型、地址和 API 密钥后保存。保存后会自动启用。'))
+  return props.children
 }
 
 function ovxErrorText(error) {
