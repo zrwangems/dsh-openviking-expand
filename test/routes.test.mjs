@@ -30,6 +30,14 @@ test("bootstrap 暴露组件开关与根 URI", async () => {
   assert.equal(payload.result.showHidden, false);
 });
 
+test("旧设置与校验接口已移除，POST 不再接受连接配置", async () => {
+  const router = createRouter({ config: makeConfig(), client: fakeClient(), fence: () => true });
+  const settings = await call(router, "/openviking-expand/settings");
+  assert.equal(settings.status, 404);
+  const verify = await call(router, "/openviking-expand/verify", "POST");
+  assert.equal(verify.status, 405);
+});
+
 test("ls 把查询参数与根交给访问层", async () => {
   const client = fakeClient({
     list: uri => ({

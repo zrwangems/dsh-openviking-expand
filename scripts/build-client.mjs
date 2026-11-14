@@ -21,7 +21,6 @@ const FRAGMENTS = [
   "tree.mjs",
   "item.mjs",
   "console.mjs",
-  "connect.mjs",
   "entry.mjs",
 ];
 

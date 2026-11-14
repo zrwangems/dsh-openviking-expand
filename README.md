@@ -29,7 +29,7 @@
 
 ## 环境要求
 
-- DSH Web 或 Desktop，`0.2.2+`（当前版本在 `0.2.2-rc.1` 上验证）；
+- DSH Web 或 Desktop，`0.2.2-rc.3` 至 `<0.3.0`；
 - OpenViking `0.5.x`，`/health` 可访问；
 - 可选：`dsh-better-sidebar` `0.30.x`，用于右侧栏页签。
 
@@ -60,9 +60,17 @@ dsh plugin --profile web add .
 
 ## 配置
 
-### OpenViking 页
+不需要在 DSH 插件设置页填写 OV 连接。插件启动时自动读取本机配置：
 
-配置服务类型、地址、语言和密钥。也可以在嵌入的 Studio 里添加连接，侧边栏会跟随 Studio 当前选中的连接。
+1. `OPENVIKING_URL` / `OPENVIKING_BASE_URL`、`OPENVIKING_API_KEY` 等环境变量；
+2. `~/.openviking/ovcli.conf`（`url`、`api_key`、`root_api_key`、`account`、`user`）；
+3. `~/.openviking/ov.conf`（`server.url`，或 `server.host` + `server.port`，以及 `server.root_api_key`）；
+4. 旧版插件保存的连接（仅作兼容兜底）；
+5. 默认地址 `http://127.0.0.1:1933`。
+
+也可以用 `OPENVIKING_CLI_CONFIG_FILE` 和 `OPENVIKING_CONFIG_FILE` 指定两个配置文件的路径。修改配置后重启 DSH 生效。日常推荐使用 `ov` CLI 配置好连接后直接打开插件。
+
+嵌入的 Studio 仍支持自行添加和切换连接，侧边栏会跟随 Studio 当前选中的连接。本机配置只用于初始化默认连接，不会覆盖一个已经完整可用的 Studio 连接。
 
 ## 使用
 
@@ -85,11 +93,11 @@ DSH 浏览器
 
 - 插件壳与组件入口：`host/index.mjs`、`host/components/*`；
 - 浏览器客户端：`client/`，构建为 `lib/client.js`；
-- 插件配置持久化：`~/.dsh/openviking-expand.json`。
+- 本机 OV 配置读取：`host/config.mjs`；旧版 `~/.dsh/openviking-expand.json` 只读兼容，不再写入。
 
 ## 安全
 
-- OpenViking key 只在 Host 侧使用，不进浏览器；
+- 本机 OV 配置只由 Host 读取，插件不再另存地址或密钥，也不会把本机凭据转发给 Studio 中选择的其他服务；
 - `viking://` 只读；拒绝 `..`、控制字符、查询串和反斜杠；
 - 插件不安装、不修改、不删除任何外部服务或容器。
 

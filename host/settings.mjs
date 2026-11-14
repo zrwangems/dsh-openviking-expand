@@ -1,24 +1,19 @@
 /**
- * 插件设置（一页：OpenViking 连接）。
+ * 旧版插件设置的只读兼容层。
  *
- * 存放 `~/.dsh/openviking-expand.json`，与 profile 的 cordis 配置解耦：
- *  - openviking：服务类型、地址、语言、账号/用户、用户/管理员 Key。
- *
- * 兼容旧版扁平结构（serviceType/server/... 在顶层），读取时自动迁移。
+ * 0.3.1 起不再提供设置表单，也不再写这个文件。只有在本机 OV 配置缺项时，
+ * 才用 ~/.dsh/openviking-expand.json 里的旧连接兜底，方便已有安装平滑升级。
  */
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { readFileSync, realpathSync } from "node:fs";
+import { join } from "node:path";
+import { readFileSync } from "node:fs";
 
 const OPENVIKING_KEYS = ["serviceType", "server", "language", "account", "user", "apiKey", "adminKey"];
 
-/** 设置文件路径；测试可用环境变量覆盖。 */
 export function settingsFile() {
   return process.env.OPENVIKING_EXPAND_SETTINGS || join(homedir(), ".dsh", "openviking-expand.json");
 }
 
-/** 把磁盘上的旧/新结构统一成 `{openviking}`；旧版遗留的其它字段直接丢弃。 */
 export function normalizeSettings(raw = {}) {
   const source = raw !== null && typeof raw === "object" ? raw : {};
   const openviking = {};
@@ -29,20 +24,9 @@ export function normalizeSettings(raw = {}) {
       if (source[key] !== undefined) openviking[key] = source[key];
     }
   }
-  return { openviking, updatedAt: typeof source.updatedAt === "string" ? source.updatedAt : undefined };
+  return { openviking };
 }
 
-/** 读设置（异步）；不存在或坏文件都当空对象。 */
-export async function readSettings() {
-  try {
-    const text = await readFile(settingsFile(), "utf8");
-    return normalizeSettings(JSON.parse(text));
-  } catch {
-    return normalizeSettings({});
-  }
-}
-
-/** 读设置（同步）：用于 Cordis 组件 apply 阶段决定连接参数。 */
 export function readSettingsSync() {
   try {
     return normalizeSettings(JSON.parse(readFileSync(settingsFile(), "utf8")));
@@ -50,55 +34,3 @@ export function readSettingsSync() {
     return normalizeSettings({});
   }
 }
-
-async function writeSettings(settings) {
-  const file = settingsFile();
-  const payload = { openviking: settings.openviking, updatedAt: new Date().toISOString() };
-  await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  return payload;
-}
-
-/** 合并写 OpenViking 页；`undefined`/空字符串沿用已有值（密钥留空=沿用）。 */
-export async function saveSettings(patch = {}) {
-  const settings = await readSettings();
-  for (const key of ["serviceType", "server", "language", "account", "user"]) {
-    if (typeof patch[key] === "string" && patch[key].trim() !== "") settings.openviking[key] = patch[key].trim();
-  }
-  for (const key of ["apiKey", "adminKey"]) {
-    if (typeof patch[key] === "string" && patch[key] !== "") settings.openviking[key] = patch[key];
-  }
-  return writeSettings(settings);
-}
-
-/** 给浏览器看的设置摘要。 */
-export function publicSettings(settings = normalizeSettings({})) {
-  const openviking = settings.openviking || {};
-  return {
-    configured: typeof openviking.server === "string" && openviking.server !== "",
-    serviceType: openviking.serviceType === "volc" ? "volc" : "open",
-    server: typeof openviking.server === "string" ? openviking.server : "",
-    language: openviking.language === "en" ? "en" : "zh",
-    account: typeof openviking.account === "string" ? openviking.account : "",
-    user: typeof openviking.user === "string" ? openviking.user : "",
-    hasApiKey: typeof openviking.apiKey === "string" && openviking.apiKey !== "",
-    hasAdminKey: typeof openviking.adminKey === "string" && openviking.adminKey !== "",
-  };
-}
-
-/** 服务地址合法性（与 routes 里保持同一规则）。 */
-export function normalizeServer(value) {
-  if (typeof value !== "string" || value.trim() === "") return null;
-  let url;
-  try {
-    url = new URL(value.trim());
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-  url.search = "";
-  url.hash = "";
-  return url.href.replace(/\/+$/, "");
-}
-
-export { isAbsolute };

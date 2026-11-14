@@ -51,6 +51,9 @@ function remount() {
   const merged = resolveConfig({
     endpoint: sidebar?.input.endpoint ?? consolePart?.input.endpoint,
     apiKey: sidebar?.input.apiKey ?? consolePart?.input.apiKey,
+    adminKey: sidebar?.input.adminKey ?? consolePart?.input.adminKey,
+    accountId: sidebar?.input.accountId ?? consolePart?.input.accountId,
+    userId: sidebar?.input.userId ?? consolePart?.input.userId,
     console: consolePart?.input.console,
     sidebar: sidebar?.input.sidebar,
   });

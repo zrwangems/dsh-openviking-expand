@@ -9,12 +9,9 @@
     - id: openviking-expand-sidebar
       name: 'dsh-openviking-expand/sidebar'
       config:
-        endpoint: http://127.0.0.1:1933
         sidebar:
           root: viking://
           showHidden: false
           nodeLimit: 1000
     - id: openviking-expand-console
       name: 'dsh-openviking-expand/console'
-      config:
-        endpoint: http://127.0.0.1:1933

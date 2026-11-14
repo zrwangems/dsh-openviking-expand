@@ -53,10 +53,11 @@ test("package.json 与 cordis.patch.yml、entry 导出一致", () => {
   assert.equal(pkg.dsh.bundle.patch, "./cordis.patch.yml");
   assert.equal(pkg.dsh.client.platform, "web");
   // 0.2.2 起插件兼容性优先按 engines.dsh 判断。
-  assert.match(pkg.engines.dsh, /0\.2\.2-rc\.1/);
+  assert.match(pkg.engines.dsh, /0\.2\.2-rc\.3/);
   assert.match(pkg.engines.dsh, /<0\.3\.0/);
 
   const patch = readFileSync(join(root, "cordis.patch.yml"), "utf8");
+  assert.doesNotMatch(patch, /endpoint:|apiKey:|adminKey:/, "默认组合不应固定 OV 连接，避免遮住本机配置");
   // 组合补丁只插三行：壳层、console、sidebar；console/sidebar 用子路径。
   assert.match(patch, /name: 'dsh-openviking-expand\/console'/);
   assert.match(patch, /name: 'dsh-openviking-expand\/sidebar'/);
@@ -72,6 +73,8 @@ test("package.json 与 cordis.patch.yml、entry 导出一致", () => {
 
   const entry = readFileSync(join(root, "lib", "client.js"), "utf8");
   assert.match(entry, new RegExp(`id: '${pkg.name}'`));
+  assert.doesNotMatch(entry, /OvxConnectWizard|plugins\.bundle\.config|plugins\.row\.config|ovx-config-saved/);
+  assert.doesNotMatch(entry, /openviking-expand\/(settings|verify)/);
 
   const locale = JSON.parse(readFileSync(join(root, "locale", "zh.json"), "utf8"));
   assert.match(locale.meta.title, /OpenViking/);
