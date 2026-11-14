@@ -254,12 +254,6 @@
 
     // ── Center-column console page ─────────────────────────────────────────
     function ConsolePage() {
-      if (!OVX_CONFIGURED) {
-        return h("div", { style: { padding: "32px", maxWidth: "640px" } },
-          h("div", { style: { fontSize: "16px", fontWeight: 600, marginBottom: "8px" } }, "OpenViking 尚未配置"),
-          h("div", { style: { fontSize: "13px", color: "var(--dsw-alias-label-secondary, #888)", lineHeight: "22px" } },
-            "请先到插件页配置 OpenViking 连接：左侧「插件」→「OpenViking 扩展」→「OpenViking 连接」，填写服务类型、地址和 API 密钥后保存。保存成功后控制台与侧边栏会自动启用。"));
-      }
       const [state, setState] = React.useState({
         phase: "loading",
         info: null,

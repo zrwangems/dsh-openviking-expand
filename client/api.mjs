@@ -2,46 +2,12 @@
  * 浏览器半侧与宿主通信的薄封装（片段）。
  *
  * 只请求本插件自己的前缀 /openviking-expand/*，不直连 OpenViking。
- * 读哪个 OpenViking：跟着控制台（嵌入的 Studio）里当前选中的那条连接走 ——
- * Studio 把连接存在同源的 localStorage 里，这里读出来带进请求：
- *   ?server=<baseUrl>      目标服务
- *   x-ov-key / x-ov-account / x-ov-user   该连接自己的凭据
- * Host 侧再按这条连接去请求 OpenViking；插件自己不保存任何连接设置。
+ *
+ * 读哪个 OpenViking 只由 Host 决定：Host 启动时读本机 OV 配置（OPENVIKING_* 环境变量、
+ * ~/.openviking/ovcli.conf、ov.conf），浏览器半侧不带任何地址和密钥。这样 Studio
+ * localStorage 里遗留的旧连接（例如 127.0.0.1:1933）不会再把侧边栏带到错误地址。
  */
 var OVX_PREFIX = '/openviking-expand'
-
-/** Studio 保存连接的 localStorage 键（web-studio 的 connection profiles）。 */
-var OVX_CONNECTION_STORAGE_KEY = 'ov_console_connection_profiles'
-
-/** 读出 Studio 当前选中的连接；没有就返回 null（Host 会退回配置的 endpoint）。 */
-function ovxConsoleConnection() {
-  try {
-    if (typeof localStorage === 'undefined') return null
-    var raw = localStorage.getItem(OVX_CONNECTION_STORAGE_KEY)
-    if (raw === null || raw === '') return null
-    var parsed = JSON.parse(raw)
-    var profiles = parsed !== null && Array.isArray(parsed.profiles) ? parsed.profiles : []
-    if (profiles.length === 0) return null
-    var active = null
-    for (var index = 0; index < profiles.length; index += 1) {
-      if (profiles[index] !== null && profiles[index].id === parsed.activeId) {
-        active = profiles[index]
-        break
-      }
-    }
-    if (active === null) active = profiles[0]
-    var connection = active !== null && active.connection !== undefined ? active.connection : null
-    if (connection === null || typeof connection.baseUrl !== 'string' || connection.baseUrl === '') return null
-    return {
-      baseUrl: connection.baseUrl,
-      apiKey: typeof connection.apiKey === 'string' ? connection.apiKey : '',
-      accountId: typeof connection.accountId === 'string' ? connection.accountId : '',
-      userId: typeof connection.userId === 'string' ? connection.userId : '',
-    }
-  } catch (error) {
-    return null
-  }
-}
 
 /** GET 一个宿主接口，返回 payload.result；失败抛带 code/status 的 Error。 */
 function ovxRequest(path, params) {
@@ -52,14 +18,7 @@ function ovxRequest(path, params) {
       if (Object.prototype.hasOwnProperty.call(params, key)) merged[key] = params[key]
     }
   }
-  var connection = ovxConsoleConnection()
   var headers = { accept: 'application/json' }
-  if (connection !== null) {
-    merged.server = connection.baseUrl
-    if (connection.apiKey !== '') headers['x-ov-key'] = connection.apiKey
-    if (connection.accountId !== '') headers['x-ov-account'] = connection.accountId
-    if (connection.userId !== '') headers['x-ov-user'] = connection.userId
-  }
   var parts = []
   for (var name in merged) {
     if (!Object.prototype.hasOwnProperty.call(merged, name)) continue

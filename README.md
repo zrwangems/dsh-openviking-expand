@@ -70,7 +70,7 @@ dsh plugin --profile web add .
 
 也可以用 `OPENVIKING_CLI_CONFIG_FILE` 和 `OPENVIKING_CONFIG_FILE` 指定两个配置文件的路径。修改配置后重启 DSH 生效。日常推荐使用 `ov` CLI 配置好连接后直接打开插件。
 
-嵌入的 Studio 仍支持自行添加和切换连接，侧边栏会跟随 Studio 当前选中的连接。插件创建的 `dsh-console` 默认连接会跟随本机 OV 配置更新，包括从旧的 `127.0.0.1` 地址迁移到新地址；用户自己创建的 Studio 连接不会被覆盖。
+嵌入的 Studio 仍支持自行添加和切换连接，但控制台与侧边栏读取哪台 OpenViking 只由上面的本机配置决定：浏览器半侧不再跟随 Studio 里选中的连接，也不会把地址或密钥带进插件请求。插件创建的 `dsh-console` 连接会在每次加载时同步到本机配置的地址和密钥（包括从旧的 `127.0.0.1` 迁移到新地址）；用户自己创建的 Studio 连接保留在列表里，不会被删除或修改。
 
 ## 使用
 

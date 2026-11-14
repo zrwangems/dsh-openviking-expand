@@ -120,9 +120,14 @@ function renderOnce(instance, mount, props) {
 
 async function settle(instance, mount, props) {
   let output = renderOnce(instance, mount, props);
-  for (let round = 0; round < 20; round += 1) {
-    await new Promise(resolve => setTimeout(resolve, 8));
-    if (instance.dirty !== true) break;
+  for (let round = 0; round < 40; round += 1) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+    // 组件内部还会展开出别的函数组件，它们的 setState 标在自己的实例上，
+    // 只看顶层 instance.dirty 会让「异步取数后再渲染」这一步被跳过。
+    const dirty = instance.dirty === true || [...nestedInstances.values()].some(nested => nested.dirty === true);
+    if (!dirty) break;
+    instance.dirty = false;
+    for (const nested of nestedInstances.values()) nested.dirty = false;
     output = renderOnce(instance, mount, props);
   }
   return output;
@@ -221,7 +226,7 @@ function createRuntime() {
     theme: { getTheme() { return { scheme: "light", tokens: {}, revision: 0 }; } },
     slots: {
       inject(_key, callback) { callback(); return () => {}; },
-      register(descriptor) { state.registeredSlots.push(descriptor); return () => {}; },
+      register(descriptor, component) { state.registeredSlots.push({ ...descriptor, component }); return () => {}; },
     },
   };
 
@@ -235,6 +240,14 @@ function createRuntime() {
     console: { log() {}, warn() {}, error() {} },
     localStorage,
     location: { origin: "http://dsh.test" },
+    document: {
+      baseURI: "http://dsh.test/",
+      getElementById() { return null; },
+      createElement() { return { setAttribute() {}, appendChild() {}, style: {}, textContent: "" }; },
+      head: { appendChild() {}, removeChild() {} },
+      body: { appendChild() {}, removeChild() {} },
+      documentElement: {},
+    },
     setTimeout,
     clearTimeout,
     setInterval,
@@ -261,6 +274,21 @@ function reply(result) {
 function fakeFetch(url) {
   if (url.includes("/openviking-expand/bootstrap")) {
     return reply({ components: { console: true, sidebar: true }, endpoint: "http://ov.test", root: "viking://", showHidden: false, nodeLimit: 1000 });
+  }
+  if (url.includes("/openviking-expand/console")) {
+    // 控制台状态路由直接返回体（不套 result），与宿主实现一致。
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        serverUrl: "http://ov.test/",
+        consoleUrl: "http://ov.test/",
+        browserUrl: "http://ov.test/studio/home",
+        health: { reachable: true, healthy: true, version: "0.5.5", authMode: "api_key" },
+        studio: { reachable: true, available: true, status: 200 },
+      }),
+    });
   }
   if (url.includes("/openviking-expand/ls")) {
     const uri = new URL(url, "http://x").searchParams.get("uri") || "viking://";
@@ -374,6 +402,24 @@ const consoleSidebar = runtime.state.registeredSlots.find(slot => slot.name === 
 report.push(`console 面板槽位       ${String(mainSlot !== undefined)} / ${String(consoleSidebar !== undefined)}`);
 if (mainSlot === undefined) throw new Error("缺 console main 槽位");
 if (consoleSidebar === undefined) throw new Error("缺 console 侧栏入口");
+
+// 回归：控制台 main 组件必须真的能渲染。0.3.1/0.3.2 里它引用了已经删掉的
+// OVX_CONFIGURED 常量，浏览器里直接 ReferenceError、面板全白，而只检查
+// 槽位是否登记是发现不了的。
+const mainInstance = { slots: [] };
+const consoleTree = await settle(mainInstance, props => jsx(mainSlot.component, props), {});
+const consoleNodes = findAll(consoleTree, element => typeof element.props?.className === "string" && element.props.className.indexOf("ov-console") >= 0);
+const consoleFrames = findAll(consoleTree, element => element.type === "iframe");
+report.push(`console 渲染         ${consoleNodes.length} 个节点 / iframe ${consoleFrames.length}`);
+if (consoleNodes.length === 0) throw new Error("console main 组件没有渲染出控制台界面");
+const frameSrc = consoleFrames.length > 0 ? String(consoleFrames[0].props.src) : "";
+if (!frameSrc.includes("/studio/home")) throw new Error(`console 没有挂同源 /studio/home iframe：${frameSrc}`);
+
+// 回归：浏览器半侧不得再把自己的目标服务地址塞进请求（旧版会把 Studio
+// localStorage 里遗留的 127.0.0.1:1933 带上去，导致连错服务）。
+const serverParamCalls = runtime.state.fetchCalls.filter(call => String(call.url).indexOf("server=") >= 0);
+if (serverParamCalls.length > 0) throw new Error(`浏览器半侧又把 Studio 连接带进了请求：${serverParamCalls[0].url}`);
+report.push(`请求参数             ${serverParamCalls.length} 个 server=`);
 
 
 /* 树页签在真实 DSH 浏览器里验收；离线 smoke 只覆盖信封、组件注册与页签。 */

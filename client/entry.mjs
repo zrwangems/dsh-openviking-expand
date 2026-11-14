@@ -45,19 +45,25 @@ function ovxLabel(key) {
 }
 
 /**
- * 清掉旧版本替用户写进 Studio 的那条假连接（id `dsh-console`）。
+ * 让嵌入的 Studio 跟随本机 OV 配置。
  *
- * 现在插件不再写入任何连接设置：连接由用户在 Studio 里自己加，侧边栏跟着它走。
- * 这一步只删除我们自己造的那条，别的连接一条都不动。
+ * 插件不再提供连接配置界面：endpoint 和密钥全部由 Host 从本机 OV 配置解析。
+ * 这里把解析结果同步成 Studio 的一条托管连接（id `dsh-console`），并切换过去；
+ * 用户自己创建的连接原样保留，只是不会被自动选中。
+ *
+ * 旧版本会先把 localStorage 里那条「看起来合法」的旧连接（例如改配置前的
+ * 127.0.0.1:1933）判为可用后提前返回，导致 Studio 与侧边栏继续连旧地址。
+ * 现在只有在活动连接已经等于本机配置时才什么都不做。
  */
 function ovxSeedStudioConnection(endpoint, apiKey, adminKey) {
   // Studio 嵌在同源 /studio 代理下，会把当前 origin（DSH 地址）误当成 OV 服务；
   // 另外 OV 默认 auth_mode=api_key，Studio 连接必须带 Key，否则「连接尚未验证成功」。
-  // 打开控制台前写入宿主配置的 endpoint + 宿主解析出的 API Key。
   try {
     if (typeof localStorage === 'undefined' || typeof location === 'undefined') return
     var keyText = typeof apiKey === 'string' ? apiKey : ''
     var adminText = typeof adminKey === 'string' ? adminKey : ''
+    var target = typeof endpoint === 'string' && endpoint !== '' ? endpoint.replace(/\/+$/, '') : ''
+    if (target === '') return
     var key = 'ov_console_connection_profiles'
     var parsed = null
     try {
@@ -67,32 +73,16 @@ function ovxSeedStudioConnection(endpoint, apiKey, adminKey) {
     var profiles = parsed !== null && parsed !== undefined && Array.isArray(parsed.profiles) ? parsed.profiles : []
     var activeId = parsed !== null && parsed !== undefined && typeof parsed.activeId === 'string' ? parsed.activeId : ''
     var origin = location.origin
-    var target = typeof endpoint === 'string' && endpoint !== '' ? endpoint.replace(/\/+$/, '') : 'http://127.0.0.1:1933'
     var active = null
     for (var index = 0; index < profiles.length; index += 1) {
       if (profiles[index] !== null && profiles[index] !== undefined && profiles[index].id === activeId) { active = profiles[index]; break }
     }
     if (active === null) active = profiles[0] !== undefined ? profiles[0] : null
-    var current = active !== null && active !== undefined && active.connection !== undefined && typeof active.connection.baseUrl === 'string'
-      ? active.connection.baseUrl.replace(/\/+$/, '')
-      : ''
-    var currentKey = active !== null && active !== undefined && active.connection !== undefined && typeof active.connection.apiKey === 'string'
-      ? active.connection.apiKey
-      : ''
-    var currentService = active !== null && active !== undefined && active.connection !== undefined && typeof active.connection.serviceSelection === 'string'
-      ? active.connection.serviceSelection
-      : ''
-    var currentAdmin = active !== null && active !== undefined && active.connection !== undefined && typeof active.connection.adminApiKey === 'string'
-      ? active.connection.adminApiKey
-      : ''
-    var needsKey = keyText !== '' && currentKey === ''
-    var needsAdmin = adminText !== '' && currentAdmin === ''
-    // dsh-console 是插件创建的托管连接，必须跟随本机 OV 配置更新。
-    // 旧版本会把 127.0.0.1 判为 valid 后提前返回，导致 ovcli.conf 已改成
-    // 虚拟机/远程地址时，侧边栏仍向旧地址发请求。用户自己创建的连接不动。
-    var managed = active !== null && active !== undefined && active.id === 'dsh-console'
-    var valid = !managed && current !== '' && current !== origin && /^https?:\/\//i.test(current) && !needsKey && !needsAdmin && currentService !== ''
-    if (valid) return
+    var connection = active !== null && active !== undefined && active.connection !== undefined ? active.connection : null
+    var current = connection !== null && typeof connection.baseUrl === 'string' ? connection.baseUrl.replace(/\/+$/, '') : ''
+    var currentKey = connection !== null && typeof connection.apiKey === 'string' ? connection.apiKey : ''
+    // 活动连接已经是本机配置（并且带了密钥）：不动用户的存量设置。
+    if (current === target && current !== origin && (keyText === '' || currentKey !== '')) return
     var profile = {
       id: 'dsh-console', name: 'Default',
       connection: {
@@ -106,8 +96,8 @@ function ovxSeedStudioConnection(endpoint, apiKey, adminKey) {
       var item = profiles[i]
       if (item === null || item === undefined || item.id === 'dsh-console') continue
       var base = item.connection !== undefined && typeof item.connection.baseUrl === 'string' ? item.connection.baseUrl.replace(/\/+$/, '') : ''
+      // 同源地址是旧版本把 DSH 地址误当 OV 服务留下的，清掉。
       if (base === origin) continue
-      if (keyText !== '' && base === target) continue
       others.push(item)
     }
     localStorage.setItem(key, JSON.stringify({ profiles: [profile].concat(others), activeId: 'dsh-console' }))
