@@ -234,6 +234,7 @@ function createRuntime() {
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
     localStorage,
+    location: { origin: "http://dsh.test" },
     setTimeout,
     clearTimeout,
     setInterval,
@@ -300,9 +301,9 @@ function fakeFetch(url) {
 
 /* ── 跑起来 ────────────────────────────────────────────────────────────── */
 const runtime = createRuntime();
-// Studio 里的连接存储：一条用户真连接 + 旧插件写进去的假连接
+// 回归：旧插件托管连接仍指向 127.0.0.1 时，必须更新为 bootstrap 的本机 OV 地址。
 runtime.sandbox.localStorage.setItem("ov_console_connection_profiles", JSON.stringify({
-  activeId: "real",
+  activeId: "dsh-console",
   profiles: [
     {
       id: "real",
@@ -350,6 +351,13 @@ await new Promise(resolve => setTimeout(resolve, 50));
 const report = [];
 report.push(`信封 id              ${envelope.id}`);
 report.push(`inject               ${JSON.stringify(plugin.inject)}`);
+const seededProfiles = JSON.parse(runtime.sandbox.localStorage.getItem("ov_console_connection_profiles"));
+const managedProfile = seededProfiles.profiles.find(profile => profile.id === "dsh-console");
+if (seededProfiles.activeId !== "dsh-console" || managedProfile?.connection.baseUrl !== "http://ov.test") {
+  throw new Error("托管 Studio 连接没有跟随本机 OV 配置更新");
+}
+if (!seededProfiles.profiles.some(profile => profile.id === "real")) throw new Error("覆盖了用户自己的 Studio 连接");
+report.push(`托管连接             ${managedProfile.connection.baseUrl}`);
 
 const tabIds = runtime.state.registeredTabs.map(tab => tab.id);
 report.push(`注册页签             ${JSON.stringify(tabIds)}`);
